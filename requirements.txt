@@ -8,6 +8,10 @@ numpy>=1.26
 PyYAML>=6.0
 openpyxl>=3.1          # .xlsx statements via pandas.read_excel
 
+# persistence — SQLite by default, Postgres via DATABASE_URL (docker-compose.yml)
+SQLAlchemy>=2.0
+psycopg[binary]>=3.2
+
 # api
 fastapi>=0.115
 uvicorn>=0.30

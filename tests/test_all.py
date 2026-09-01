@@ -280,6 +280,75 @@ def test_preview_is_scoped_to_its_client():
     assert client.post(f"/api/clients/sharma/previews/{pid}/classify").status_code == 200
 
 
+# ── persistence (TRD §4) ─────────────────────────────────────────────
+
+PG_URL = "postgresql+psycopg://ledger:ledger@localhost:5433/ledger_pilot"
+
+
+def _backends():
+    """SQLite always; Postgres too when docker-compose.yml is up. A schema that
+    works on one backend and not the other is a defect we want to see here, not
+    at the partner firm — but the suite must not require Docker to run."""
+    import os
+
+    urls = [("sqlite", "sqlite+pysqlite:///:memory:")]
+    if os.environ.get("LP_SKIP_PG") != "1":
+        try:
+            import socket
+            with socket.create_connection(("localhost", 5433), timeout=0.6):
+                urls.append(("postgres", PG_URL))
+        except OSError:
+            pass
+    return urls
+
+
+def test_schema_round_trips_on_every_backend():
+    from decimal import Decimal
+
+    from sqlalchemy import inspect
+
+    from db import session as dbs
+    from db.models import AuditEvent, Client, Firm, Statement, TransactionLine
+
+    checked = []
+    for name, u in _backends():
+        dbs.configure(u, create=False)
+        dbs.reset()
+        assert len(inspect(dbs.engine()).get_table_names()) == 13
+
+        with dbs.session_scope() as s:
+            s.add(Firm(id="f1", name="Mehta & Associates", materiality=200_000))
+            s.add(Client(id="c1", firm_id="f1", name="Sharma Textiles"))
+            s.add(Statement(id="s1", client_id="c1", opening_balance=482110.50,
+                            balance_breaks=[4, 9]))
+            s.add(TransactionLine(id="s1-0", statement_id="s1", seq=0,
+                                  date="2026-08-01", narration_raw="UPI/DR/1/RAMESH & CO",
+                                  amount=Decimal("12345.67"), direction="dr",
+                                  refs={"vpa": "r@ybl"},
+                                  suggestion={"tier": "T1", "score": 0.97}))
+            s.add(AuditEvent(actor="priya", action="post", detail={"batch": "abc"}))
+
+        with dbs.session_scope() as s:
+            # money must survive as an exact decimal, not a float approximation
+            assert s.get(TransactionLine, "s1-0").amount == Decimal("12345.67")
+            assert s.get(Statement, "s1").opening_balance == Decimal("482110.50")
+            assert s.get(Statement, "s1").balance_breaks == [4, 9]
+            assert s.get(TransactionLine, "s1-0").refs == {"vpa": "r@ybl"}
+            assert s.query(AuditEvent).one().detail == {"batch": "abc"}
+
+        # referential integrity must hold on SQLite too (PRAGMA foreign_keys)
+        try:
+            with dbs.session_scope() as s:
+                s.add(Statement(id="orphan", client_id="nope"))
+            raise AssertionError(f"{name}: accepted a statement with no client")
+        except Exception as exc:
+            assert "Integrity" in type(exc).__name__, f"{name}: {exc!r}"
+        checked.append(name)
+
+    assert "sqlite" in checked
+    print(f"      backends checked: {', '.join(checked)}", end="")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

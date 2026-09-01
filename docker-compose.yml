@@ -1,0 +1,28 @@
+# Ledger Pilot's own Postgres. Port 5433 on purpose: 5432 on this machine is
+# held by another project's container, and Ledger Pilot must not depend on it.
+#
+#   docker compose up -d
+#   set DATABASE_URL=postgresql+psycopg://ledger:ledger@localhost:5433/ledger_pilot
+#
+# pgvector is in the image because TRD §3 puts relational and vectors in one DB;
+# nothing uses it yet (tiers.py still runs char-ngram TF-IDF).
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: ledger-pilot-postgres
+    environment:
+      POSTGRES_USER: ledger
+      POSTGRES_PASSWORD: ledger
+      POSTGRES_DB: ledger_pilot
+    ports:
+      - "5433:5432"
+    volumes:
+      - ledger_pilot_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ledger -d ledger_pilot"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  ledger_pilot_pgdata:

@@ -17,3 +17,8 @@ data/
 .env
 *.memory.json
 *.tally.xml
+
+# local databases hold real client narrations once a partner is onboarded
+*.db
+*.sqlite
+*.sqlite3
