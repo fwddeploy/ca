@@ -1,5 +1,9 @@
 """M0 test suite: parsing + balance check, enrichment, memory semantics,
-calibration routing, Tally XML shape, end-to-end pipeline."""
+calibration routing, Tally XML shape, end-to-end pipeline.
+
+Plus the M1 posting-safety tests: exactly one batch id per statement, and reads
+that do not write. Both of those were live defects — see the `_api` helpers.
+"""
 import sys
 from pathlib import Path
 
@@ -96,6 +100,87 @@ def test_end_to_end_smoke():
     assert len(res.lines) == len(truth)
     assert res.statement.balance_ok
     assert all(l.state in ("auto_approved", "queue") for l in res.lines)
+
+
+# ── M1 posting safety ────────────────────────────────────────────────
+# Importing api.main seeds two demo clients, so these are kept together and the
+# import is lazy: the M0 tests above must not pay for it.
+
+_CLIENT, _SEED = None, [8000]
+
+
+def _api():
+    """(TestClient, fresh statement id) — a new fully-reviewed statement each
+    call, so tests cannot leak posted state into one another."""
+    from fastapi.testclient import TestClient
+
+    from api.main import DB, MATERIALITY, _store_statement, app
+    from engine.pipeline import classify_statement
+    from harness.run import rows_to_stmt
+    from harness.synth import gen_month, make_client
+
+    _SEED[0] += 1
+    c = DB["clients"]["sharma"]
+    rows, _ = gen_month(make_client(), "2026-10", seed=_SEED[0])
+    res = classify_statement(rows_to_stmt(rows), c["memory"], c["ledgers"],
+                             business=c["business"], materiality=MATERIALITY)
+    sid = _store_statement(c, res, f"posting-safety {_SEED[0]}")
+    client = TestClient(app)
+    for line in DB["statements"][sid]["lines"]:
+        if line["state"] == "queue":
+            client.post(f"/api/lines/{line['id']}/review", json={"action": "accept"})
+    return client, sid, DB["statements"][sid]
+
+
+def test_get_xml_never_posts():
+    """GET /xml used to call post_statement(), so reading the XML marked the
+    statement posted under a batch id the operator never asked for."""
+    client, sid, s = _api()
+    assert s["posted"] is False
+    r = client.get(f"/api/statements/{sid}/xml")
+    assert r.status_code == 409, "unposted statement must not hand out XML"
+    assert s["posted"] is False, "a GET wrote"
+    assert s["batch_id"] is None, "a GET minted a batch id"
+
+    batch = client.post(f"/api/statements/{sid}/post").json()["batch_id"]
+    r2 = client.get(f"/api/statements/{sid}/xml")
+    assert r2.status_code == 200 and f"LP-{batch}-0001" in r2.text
+    assert s["batch_id"] == batch, "a GET rewrote the batch id"
+
+
+def test_posting_is_idempotent():
+    """Two posts used to mint two batch ids, so the same bank line reached Tally
+    under two LP- refs and undo (keyed on the batch) could only cancel one."""
+    client, sid, s = _api()
+    a = client.post(f"/api/statements/{sid}/post").json()
+    b = client.post(f"/api/statements/{sid}/post").json()
+    assert a["batch_id"] == b["batch_id"], "second post minted a new batch"
+    assert a["xml"] == b["xml"]
+    assert b["already_posted"] is True and a["already_posted"] is False
+    assert s["batch_id"] == a["batch_id"]
+
+
+def test_undo_releases_the_batch():
+    client, sid, s = _api()
+    batch = client.post(f"/api/statements/{sid}/post").json()["batch_id"]
+    u = client.post(f"/api/statements/{sid}/undo").json()
+    assert u["batch_id"] == batch and u["cancelled"] == len(s["lines"])
+    assert 'ACTION="Cancel"' in u["xml"] and f"LP-{batch}-0001" in u["xml"]
+    assert s["posted"] is False and batch in s["undone"]
+    assert client.post(f"/api/statements/{sid}/undo").status_code == 409
+    # a re-post after undo is a genuinely new batch — the old one was cancelled
+    assert client.post(f"/api/statements/{sid}/post").json()["batch_id"] != batch
+
+
+def test_unreviewed_lines_never_export():
+    """PRD REV-6: nothing exports unreviewed."""
+    from api.main import DB
+    client, sid, s = _api()
+    s["lines"][0]["state"] = "queue"
+    assert client.post(f"/api/statements/{sid}/post").status_code == 409
+    assert client.get(f"/api/statements/{sid}/xml").status_code == 409
+    assert s["posted"] is False
+    assert DB["statements"][sid]["batch_id"] is None
 
 
 if __name__ == "__main__":

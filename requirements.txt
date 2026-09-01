@@ -16,6 +16,7 @@ pydantic>=2.8
 
 # tests
 pytest>=8.0
+httpx>=0.27            # fastapi.testclient, for the posting-safety tests
 
 # Tier 3 production adapter is optional — engine/llm.py imports it lazily:
 #   pip install anthropic

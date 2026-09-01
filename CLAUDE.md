@@ -19,17 +19,18 @@ casually.
 - `bridge/tally_xml.py` — voucher/masters/undo XML, idempotent `LP-{batch}-{seq}` refs.
 - `harness/` — synthetic golden data + `run.py`, the accuracy gate.
 - `api/main.py` — FastAPI (in-memory demo store); `api/static/index.html` — the SPA.
-- `tests/test_all.py` — 8 tests.
+- `tests/test_all.py` — 12 tests (8 engine, 4 posting-safety).
 
 ## Commands
 
 ```
-python3 tests/test_all.py          # must stay green
-python3 -m harness.run             # must end "ALL CHECKS PASS"
-uvicorn api.main:app --port 8000   # app at http://localhost:8000
+.venv\Scripts\python tests\test_all.py                  # must stay green
+.venv\Scripts\python -m harness.run                     # must end "ALL CHECKS PASS"
+.venv\Scripts\python -m harness.run --materiality 50000 # currently FAILS — see README
+.venv\Scripts\uvicorn api.main:app --port 8000          # app at http://localhost:8000
 ```
 
-Deps: `pip install fastapi uvicorn pandas scikit-learn pyyaml python-multipart`.
+Setup: `python -m venv .venv && .venv\Scripts\pip install -r requirements.txt`.
 
 ## Non-negotiable principles
 
@@ -48,16 +49,31 @@ Deps: `pip install fastapi uvicorn pandas scikit-learn pyyaml python-multipart`.
 7. **Privacy:** LLM calls send single narration lines + the client's ledger
    names only — never files, balances, or the firm's client list. No client
    data in logs.
+8. **One statement, one batch id, forever. Reads never write.** A GET must not
+   post, and a second POST /post must return the first batch, not a new one.
+   Two batch ids for one statement puts every line into Tally twice under two
+   `LP-` refs, and `undo_xml` — keyed on the batch — can only cancel one of
+   them. Both of those were live defects; `tests/test_all.py` now pins them.
+9. **State the guardrail with the number.** An auto-rate quoted without its
+   materiality is not a measurement. `harness/run.py` prints its value and
+   takes `--materiality`; keep it that way.
 
 ## Current state / next work (M1 → M2)
 
-Done: engine, calibration, harness (all green on synthetic data), Tally XML,
-FastAPI demo API, working SPA (workspace / review queue / post).
+Done: engine, calibration, harness, Tally XML, FastAPI demo API, working SPA.
+Reproduced on a clean machine (12/12 tests, harness green at ₹2,00,000).
+Posting is now idempotent, `GET /xml` no longer writes, `/undo` is exposed.
+
+**Open, needs the owner:** the go/no-go bar "warm auto ≥ 75%" cannot be met at
+the shipped ₹50,000 materiality — the guardrail alone caps it at 63.3% on the
+synthetic month. Do not weaken the check. See README "the bar and the default
+contradict each other". Real partner statements settle it.
+
 Next, roughly in order:
+- Statement upload UI (file drop → parse preview with balance check → classify).
 - Replace in-memory store with Postgres + SQLAlchemy (schema in trd.md §4);
   keep `review.state` as single source of truth, append-only AuditEvent.
 - Auth (email OTP), roles operator/approver, maker-checker release step.
-- Statement upload UI (file drop → parse preview with balance check → classify).
 - Rules & memory screen; automation scoreboard (realized precision per tier).
 - PDF parsing (pdfplumber, per-bank configs); real bank configs beyond the 4 stubs.
 - Real Tier-3: AnthropicLLM batched (20 lines/call), few-shot from client memory.

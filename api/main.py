@@ -20,7 +20,7 @@ from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
 
-from bridge.tally_xml import voucher_xml
+from bridge.tally_xml import undo_xml, voucher_xml
 from engine import calibrate
 from engine.memory import ClientMemory
 from engine.pipeline import Result, classify_statement
@@ -202,24 +202,66 @@ def review_group(sid: str, body: ReviewIn):
     return {"updated": len(updated)}
 
 
-@app.post("/api/statements/{sid}/post")
-def post_statement(sid: str):
-    s = DB["statements"].get(sid) or _404()
-    c = DB["clients"][s["client_id"]]
+def _voucher_lines(s, c):
+    """The posting payload for a statement. Pure — reads, never writes."""
+    names = _ledger_names(c)
+    orphan = [l["id"] for l in s["lines"] if l["final_guid"] not in names]
+    if orphan:
+        raise HTTPException(409, f"{len(orphan)} lines point at a ledger that is not in "
+                                 f"the client's synced masters: {orphan[:5]}")
+    return [{"date": l["date"], "narration": l["narration"], "amount": l["amount"],
+             "direction": l["direction"], "ledger_name": names[l["final_guid"]]}
+            for l in s["lines"]]
+
+
+def _assert_postable(s):
     unreviewed = [l for l in s["lines"] if l["state"] == "queue"]
     if unreviewed:
         raise HTTPException(409, f"{len(unreviewed)} lines still need review")
     no_ledger = [l["id"] for l in s["lines"] if not l["final_guid"]]
     if no_ledger:
         raise HTTPException(409, f"{len(no_ledger)} lines have no final ledger: {no_ledger[:5]}")
-    names = _ledger_names(c)
-    batch = uuid.uuid4().hex[:6]
-    lines = [{"date": l["date"], "narration": l["narration"], "amount": l["amount"],
-              "direction": l["direction"], "ledger_name": names[l["final_guid"]]}
-             for l in s["lines"]]
-    xml = voucher_xml(lines, c["bank_ledger"], batch)
-    s["posted"], s["batch_id"] = True, batch
-    return {"batch_id": batch, "vouchers": len(lines), "xml": xml}
+
+
+@app.post("/api/statements/{sid}/post")
+def post_statement(sid: str):
+    """Idempotent: a statement is posted under exactly one batch id, ever.
+
+    A second call returns the first batch rather than minting a new one. Two
+    batch ids for one statement means Tally can import every line twice under
+    two different LP- refs, and undo_xml — which is keyed on the batch — can
+    then only cancel one of them. Silent duplicates are the fastest way to lose
+    a firm's trust (docs/decisions.md, the Hubdoc entry).
+    """
+    s = DB["statements"].get(sid) or _404()
+    c = DB["clients"][s["client_id"]]
+    _assert_postable(s)
+    lines = _voucher_lines(s, c)
+    already = s["posted"]
+    if not already:
+        s["posted"], s["batch_id"] = True, uuid.uuid4().hex[:6]
+        DB["audit"].append({"actor": "priya", "action": "post",
+                            "statement": sid, "batch": s["batch_id"]})
+    return {"batch_id": s["batch_id"], "vouchers": len(lines),
+            "xml": voucher_xml(lines, c["bank_ledger"], s["batch_id"]),
+            "already_posted": already}
+
+
+@app.post("/api/statements/{sid}/undo")
+def undo_statement(sid: str):
+    """Cancellation XML for a posted batch. Import this into Tally *before*
+    re-posting — the statement returns to unposted and the next post mints a
+    fresh batch id."""
+    s = DB["statements"].get(sid) or _404()
+    if not s["posted"]:
+        raise HTTPException(409, "statement is not posted; nothing to undo")
+    batch, n = s["batch_id"], len(s["lines"])
+    xml = undo_xml(batch, n, {i: l["date"] for i, l in enumerate(s["lines"], start=1)})
+    s["undone"] = s.get("undone", []) + [batch]
+    s["posted"], s["batch_id"] = False, None
+    DB["audit"].append({"actor": "priya", "action": "undo",
+                        "statement": sid, "batch": batch})
+    return {"batch_id": batch, "cancelled": n, "xml": xml}
 
 
 @app.post("/api/clients/{cid}/upload")
@@ -241,18 +283,18 @@ async def upload(cid: str, file: UploadFile):
 
 @app.get("/api/statements/{sid}/xml", response_class=PlainTextResponse)
 def get_xml(sid: str):
+    """A read. It does not post, and it does not mint a batch id.
+
+    XML only exists once a statement is posted. Handing out XML beforehand
+    stamps it with a batch the server has not recorded, so importing that file
+    puts vouchers into Tally that the undo path cannot reach.
+    """
     s = DB["statements"].get(sid) or _404()
-    return post_statement(sid)["xml"] if not s["posted"] else \
-        post_statement.__wrapped__(sid)["xml"] if False else _rebuild_xml(s)
-
-
-def _rebuild_xml(s):
+    if not s["posted"]:
+        raise HTTPException(409, "statement is not posted yet — POST "
+                                 f"/api/statements/{sid}/post to post it and receive its XML")
     c = DB["clients"][s["client_id"]]
-    names = _ledger_names(c)
-    lines = [{"date": l["date"], "narration": l["narration"], "amount": l["amount"],
-              "direction": l["direction"], "ledger_name": names[l["final_guid"]]}
-             for l in s["lines"] if l["final_guid"]]
-    return voucher_xml(lines, c["bank_ledger"], s["batch_id"] or "preview")
+    return voucher_xml(_voucher_lines(s, c), c["bank_ledger"], s["batch_id"])
 
 
 def _404():
