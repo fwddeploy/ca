@@ -4,10 +4,32 @@ calibration routing, Tally XML shape, end-to-end pipeline.
 Plus the M1 posting-safety tests: exactly one batch id per statement, and reads
 that do not write. Both of those were live defects — see the `_api` helpers.
 """
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+# The suite gets its own throwaway database, always. Without this it would run
+# against whatever DATABASE_URL happens to point at — one day that will be a
+# partner firm's real books, and this suite creates, posts and undoes freely.
+#
+# LP_TEST_DB_URL runs the whole suite against another backend (that is how the
+# Postgres parity run is done). It is WIPED on every run, so the name must say
+# "test" out loud — a typo must not be able to drop a real database.
+_ALT = os.environ.get("LP_TEST_DB_URL")
+if _ALT:
+    if "test" not in _ALT.rsplit("/", 1)[-1].lower():
+        raise SystemExit(f"refusing to wipe a database not named *test*: {_ALT}")
+    os.environ["DATABASE_URL"] = _ALT
+    from db import session as _dbs                                   # noqa: E402
+    _dbs.configure(_ALT)
+    _dbs.reset()
+else:
+    _TESTDB = Path(tempfile.gettempdir()) / "ledger-pilot-tests.db"
+    _TESTDB.unlink(missing_ok=True)
+    os.environ["DATABASE_URL"] = f"sqlite+pysqlite:///{_TESTDB.as_posix()}"
 
 from bridge.tally_xml import masters_xml, undo_xml, voucher_xml
 from engine import calibrate
@@ -106,67 +128,76 @@ def test_end_to_end_smoke():
 # Importing api.main seeds two demo clients, so these are kept together and the
 # import is lazy: the M0 tests above must not pay for it.
 
-_CLIENT, _SEED = None, [8000]
+_SEED = [8000]
 
 
-def _api():
-    """(TestClient, fresh statement id) — a new fully-reviewed statement each
-    call, so tests cannot leak posted state into one another."""
+def _client():
     from fastapi.testclient import TestClient
 
-    from api.main import DB, MATERIALITY, _store_statement, app
-    from engine.pipeline import classify_statement
-    from harness.run import rows_to_stmt
-    from harness.synth import gen_month, make_client
+    from api.main import app
+    return TestClient(app)
 
+
+def _st(client, sid) -> dict:
+    """The statement block, read back over HTTP. These tests touch no internals,
+    so they hold whether the store is a dict, SQLite or Postgres."""
+    return client.get(f"/api/statements/{sid}/queue").json()["statement"]
+
+
+def _api(reviewed: bool = True):
+    """(TestClient, statement id) — a fresh statement each call, created through
+    the public contract only, so tests cannot leak posted state into one another."""
+    client = _client()
     _SEED[0] += 1
-    c = DB["clients"]["sharma"]
-    rows, _ = gen_month(make_client(), "2026-10", seed=_SEED[0])
-    res = classify_statement(rows_to_stmt(rows), c["memory"], c["ledgers"],
-                             business=c["business"], materiality=MATERIALITY)
-    sid = _store_statement(c, res, f"posting-safety {_SEED[0]}")
-    client = TestClient(app)
-    for line in DB["statements"][sid]["lines"]:
-        if line["state"] == "queue":
-            client.post(f"/api/lines/{line['id']}/review", json={"action": "accept"})
-    return client, sid, DB["statements"][sid]
+    p = _upload(client, "sharma", f"fixture-{_SEED[0]}.csv", _hdfc_csv()).json()
+    sid = client.post(
+        f"/api/clients/sharma/previews/{p['preview_id']}/classify").json()["statement_id"]
+    if reviewed:
+        q = client.get(f"/api/statements/{sid}/queue").json()
+        ids = [l["id"] for l in q["lines"] if l["state"] == "queue"]
+        if ids:   # one transaction, not one per line
+            client.post(f"/api/statements/{sid}/groups/review",
+                        json={"action": "accept", "line_ids": ids})
+    return client, sid
 
 
 def test_get_xml_never_posts():
     """GET /xml used to call post_statement(), so reading the XML marked the
     statement posted under a batch id the operator never asked for."""
-    client, sid, s = _api()
-    assert s["posted"] is False
+    client, sid = _api()
+    assert _st(client, sid)["posted"] is False
     r = client.get(f"/api/statements/{sid}/xml")
     assert r.status_code == 409, "unposted statement must not hand out XML"
-    assert s["posted"] is False, "a GET wrote"
-    assert s["batch_id"] is None, "a GET minted a batch id"
+    assert _st(client, sid)["posted"] is False, "a GET wrote"
+    assert _st(client, sid)["batch_id"] is None, "a GET minted a batch id"
 
     batch = client.post(f"/api/statements/{sid}/post").json()["batch_id"]
     r2 = client.get(f"/api/statements/{sid}/xml")
     assert r2.status_code == 200 and f"LP-{batch}-0001" in r2.text
-    assert s["batch_id"] == batch, "a GET rewrote the batch id"
+    assert _st(client, sid)["batch_id"] == batch, "a GET rewrote the batch id"
 
 
 def test_posting_is_idempotent():
     """Two posts used to mint two batch ids, so the same bank line reached Tally
     under two LP- refs and undo (keyed on the batch) could only cancel one."""
-    client, sid, s = _api()
+    client, sid = _api()
     a = client.post(f"/api/statements/{sid}/post").json()
     b = client.post(f"/api/statements/{sid}/post").json()
     assert a["batch_id"] == b["batch_id"], "second post minted a new batch"
     assert a["xml"] == b["xml"]
     assert b["already_posted"] is True and a["already_posted"] is False
-    assert s["batch_id"] == a["batch_id"]
+    assert _st(client, sid)["batch_id"] == a["batch_id"]
 
 
 def test_undo_releases_the_batch():
-    client, sid, s = _api()
+    client, sid = _api()
+    n = len(client.get(f"/api/statements/{sid}/queue").json()["lines"])
     batch = client.post(f"/api/statements/{sid}/post").json()["batch_id"]
     u = client.post(f"/api/statements/{sid}/undo").json()
-    assert u["batch_id"] == batch and u["cancelled"] == len(s["lines"])
+    assert u["batch_id"] == batch and u["cancelled"] == n
     assert 'ACTION="Cancel"' in u["xml"] and f"LP-{batch}-0001" in u["xml"]
-    assert s["posted"] is False and batch in s["undone"]
+    st = _st(client, sid)
+    assert st["posted"] is False and batch in st["undone"]
     assert client.post(f"/api/statements/{sid}/undo").status_code == 409
     # a re-post after undo is a genuinely new batch — the old one was cancelled
     assert client.post(f"/api/statements/{sid}/post").json()["batch_id"] != batch
@@ -174,23 +205,26 @@ def test_undo_releases_the_batch():
 
 def test_unreviewed_lines_never_export():
     """PRD REV-6: nothing exports unreviewed."""
-    from api.main import DB
-    client, sid, s = _api()
-    s["lines"][0]["state"] = "queue"
+    client, sid = _api(reviewed=False)
+    q = client.get(f"/api/statements/{sid}/queue").json()
+    assert any(l["state"] == "queue" for l in q["lines"]), "fixture left nothing queued"
     assert client.post(f"/api/statements/{sid}/post").status_code == 409
     assert client.get(f"/api/statements/{sid}/xml").status_code == 409
-    assert s["posted"] is False
-    assert DB["statements"][sid]["batch_id"] is None
+    st = _st(client, sid)
+    assert st["posted"] is False and st["batch_id"] is None
 
 
 # ── M1 upload: parse preview, then classify ──────────────────────────
 
 
-def _hdfc_csv(tamper_row: int | None = None) -> bytes:
-    """An HDFC-layout statement as bytes. tamper_row edits one closing balance,
-    the way an altered PDF would, so the continuity chain must break there."""
+def _hdfc_csv(tamper_row: int | None = None, month: str = "2026-11",
+              seed: int = 4242) -> bytes:
+    """An HDFC-layout statement as bytes. Same client and counterparties every
+    time; change `seed` for a different month of the same business. tamper_row
+    edits one closing balance, the way an altered PDF would, so the continuity
+    chain must break there."""
     from harness.synth import gen_month, make_client
-    rows, _ = gen_month(make_client(), "2026-11", seed=4242)
+    rows, _ = gen_month(make_client(), month, seed=seed)
     if tamper_row is not None:
         rows[tamper_row]["balance"] = round(rows[tamper_row]["balance"] + 75_000, 2)
     out = ["Date,Narration,Withdrawal,Deposit,Closing Balance"]
@@ -209,14 +243,15 @@ def _upload(client, cid, name, blob):
                        files={"file": (name, blob, "text/csv")})
 
 
+def _statement_ids(client) -> set[str]:
+    return {st["id"] for c in client.get("/api/clients").json() for st in c["statements"]}
+
+
 def test_upload_previews_but_does_not_classify():
     """PRD core loop: parse preview + balance check comes *before* any
     classification. The upload used to classify and store in one shot."""
-    from fastapi.testclient import TestClient
-
-    from api.main import DB, app
-    client = TestClient(app)
-    before = set(DB["statements"])
+    client = _client()
+    before = _statement_ids(client)
 
     r = _upload(client, "sharma", "nov.csv", _hdfc_csv())
     assert r.status_code == 200, r.text
@@ -225,22 +260,20 @@ def test_upload_previews_but_does_not_classify():
     assert p["balance_ok"] is True and p["balance_breaks"] == []
     assert p["opening"] is not None and p["closing"] is not None
     assert len(p["sample"]) == 12
-    assert set(DB["statements"]) == before, "preview created a statement"
+    assert _statement_ids(client) == before, "preview created a statement"
 
     c = client.post(f"/api/clients/sharma/previews/{p['preview_id']}/classify")
     assert c.status_code == 200, c.text
     sid = c.json()["statement_id"]
-    assert sid not in before and len(DB["statements"][sid]["lines"]) == p["lines"]
-    assert client.get(f"/api/statements/{sid}/queue").status_code == 200
+    assert sid not in before
+    q = client.get(f"/api/statements/{sid}/queue")
+    assert q.status_code == 200 and len(q.json()["lines"]) == p["lines"]
 
 
 def test_broken_balance_chain_blocks_classification():
     """TRD §5: the continuity check blocks classification and names the rows."""
-    from fastapi.testclient import TestClient
-
-    from api.main import DB, app
-    client = TestClient(app)
-    before = set(DB["statements"])
+    client = _client()
+    before = _statement_ids(client)
 
     p = _upload(client, "sharma", "tampered.csv", _hdfc_csv(tamper_row=9)).json()
     assert p["balance_ok"] is False
@@ -249,14 +282,11 @@ def test_broken_balance_chain_blocks_classification():
 
     r = client.post(f"/api/clients/sharma/previews/{p['preview_id']}/classify")
     assert r.status_code == 409 and "Balance continuity" in r.json()["detail"]
-    assert set(DB["statements"]) == before, "a non-reconciling statement was classified"
+    assert _statement_ids(client) == before, "a non-reconciling statement was classified"
 
 
 def test_upload_rejects_what_it_cannot_read():
-    from fastapi.testclient import TestClient
-
-    from api.main import app
-    client = TestClient(app)
+    client = _client()
 
     r = _upload(client, "sharma", "scan.pdf", b"%PDF-1.4 not really")
     assert r.status_code == 415 and "v1.5" in r.json()["detail"]
@@ -271,10 +301,7 @@ def test_upload_rejects_what_it_cannot_read():
 
 
 def test_preview_is_scoped_to_its_client():
-    from fastapi.testclient import TestClient
-
-    from api.main import app
-    client = TestClient(app)
+    client = _client()
     pid = _upload(client, "sharma", "nov.csv", _hdfc_csv()).json()["preview_id"]
     assert client.post(f"/api/clients/deshmukh/previews/{pid}/classify").status_code == 404
     assert client.post(f"/api/clients/sharma/previews/{pid}/classify").status_code == 200
@@ -310,6 +337,8 @@ def test_schema_round_trips_on_every_backend():
     from db import session as dbs
     from db.models import AuditEvent, Client, Firm, Statement, TransactionLine
 
+    # this test repoints and wipes the process-wide engine, so put it back after
+    original = dbs.url()
     checked = []
     for name, u in _backends():
         dbs.configure(u, create=False)
@@ -345,8 +374,105 @@ def test_schema_round_trips_on_every_backend():
             assert "Integrity" in type(exc).__name__, f"{name}: {exc!r}"
         checked.append(name)
 
+    import api.main
+    dbs.configure(original)
+    api.main.ensure_seeded()
+
     assert "sqlite" in checked
     print(f"      backends checked: {', '.join(checked)}", end="")
+
+
+def _classify(client, cid, name, blob):
+    p = _upload(client, cid, name, blob).json()
+    r = client.post(f"/api/clients/{cid}/previews/{p['preview_id']}/classify")
+    assert r.status_code == 200, r.text
+    return r.json()["statement_id"]
+
+
+def test_a_correction_survives_a_restart_and_changes_next_month():
+    """The product claim, end to end through the database: correct a cold
+    client's lines once, reopen the database, and next month the same
+    counterparty comes back as T1 memory pointing at the ledger you chose.
+
+    docs/decisions.md: 'accuracy collapses 79% → 48% without per-company
+    context — the per-client memory IS the product.' This is that, persisted.
+    """
+    from collections import Counter
+
+    from db import session as dbs
+
+    client = _client()
+    sid1 = _classify(client, "deshmukh", "month1.csv", _hdfc_csv(seed=4242))
+    q1 = client.get(f"/api/statements/{sid1}/queue").json()
+
+    queued = [l for l in q1["lines"] if l["state"] == "queue" and l["counterparty_key"]]
+    key, n = Counter(l["counterparty_key"] for l in queued).most_common(1)[0]
+    assert n >= 3, f"fixture gave only {n} lines for {key}; need 3 to cross support"
+    target = next(g["guid"] for g in q1["ledgers"] if g["name"] == "Freight & Cartage Inward")
+    ids = [l["id"] for l in queued if l["counterparty_key"] == key]
+
+    r = client.post(f"/api/statements/{sid1}/groups/review",
+                    json={"action": "reassign", "ledger_guid": target, "line_ids": ids})
+    assert r.status_code == 200 and r.json()["updated"] == len(ids)
+    # crossing the support bar PROPOSES a rule; it must never create one silently
+    assert r.json()["rule_proposals"], "no rule proposal when support crossed 3"
+    assert r.json()["rule_proposals"][0]["ledger_guid"] == target
+
+    # reopen the database with a brand-new engine and connection pool
+    dbs.configure(dbs.url())
+    with dbs.session_scope() as s:
+        from db import store
+        assert store.load_memory(s, "deshmukh").match_pattern(key)[0] == target
+        assert s.query(store.Rule).count() == 0, "a correction created a rule by itself"
+
+    # next month, same counterparty, a different statement
+    sid2 = _classify(client, "deshmukh", "month2.csv", _hdfc_csv(seed=777))
+    q2 = client.get(f"/api/statements/{sid2}/queue").json()
+    same = [l for l in q2["lines"] if l["counterparty_key"] == key]
+    assert same, "the fixture's second month lost the counterparty"
+    for l in same:
+        assert l["suggestion"]["tier"] == "T1", f"expected memory, got {l['suggestion']}"
+        assert l["suggestion"]["ledger_guid"] == target
+        assert l["suggestion"]["ledger_name"] == "Freight & Cartage Inward"
+
+
+def test_audit_trail_is_append_only_and_ordered():
+    """TRD §7: every write appends an AuditEvent and the trail exports per
+    statement. Append-only is enforced in db/store.py, which offers no update
+    and no delete — this pins that earlier rows never change."""
+    from db import store
+
+    client, sid = _api()
+    first = client.get(f"/api/statements/{sid}/audit").json()["events"]
+    assert first and all(e["action"] == "accept" for e in first[1:])
+    assert first[0]["action"] == "classify"
+
+    client.post(f"/api/statements/{sid}/post")
+    client.post(f"/api/statements/{sid}/undo")
+    after = client.get(f"/api/statements/{sid}/audit").json()["events"]
+
+    assert after[:len(first)] == first, "an existing audit row changed"
+    assert [e["action"] for e in after[-2:]] == ["post", "undo"]
+    assert [e["id"] for e in after] == sorted(e["id"] for e in after)
+    assert not hasattr(store, "update_audit") and not hasattr(store, "delete_audit")
+
+
+def test_state_survives_a_reopen():
+    """Everything the operator did is in the database, not in a process."""
+    from db import session as dbs
+
+    client, sid = _api()
+    batch = client.post(f"/api/statements/{sid}/post").json()["batch_id"]
+    before = client.get(f"/api/statements/{sid}/queue").json()
+
+    dbs.configure(dbs.url())          # new engine, new pool, nothing cached
+    after = _client().get(f"/api/statements/{sid}/queue").json()
+
+    assert after["statement"] == before["statement"]
+    assert after["statement"]["posted"] is True and after["statement"]["batch_id"] == batch
+    assert after["lines"] == before["lines"]
+    assert all(l["reviewed_by"] in (None, "priya") for l in after["lines"])
+    assert all(l["state"] != "queue" for l in after["lines"])
 
 
 if __name__ == "__main__":

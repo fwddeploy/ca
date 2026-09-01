@@ -22,9 +22,9 @@ Run `.venv\Scripts\python -m pytest tests\test_all.py -q` and
 | B | Materiality made explicit and reported | `33f0b44` | E3 — see the contradiction below |
 | C | Posting made idempotent, reads made pure, `/undo` exposed | `5a45066` | 3 tests mutation-checked E3, 1 at E2 |
 | D | Two-step upload with the balance gate | `eefa1be` | 4 tests mutation-checked E3, plus live-server verification |
-| E | Postgres + SQLAlchemy store | in flight | — |
+| E | Postgres + SQLAlchemy store | `03ce570` + this | 20/20 on **both** SQLite and Postgres |
 
-Tests 8 → 16, all green. Harness green at ₹2,00,000.
+Tests 8 → 20, all green on both backends. Harness green at ₹2,00,000.
 
 ## The open question the owner must settle
 
@@ -51,15 +51,15 @@ answers "does it survive", never "is it accurate". E4/E5 needs a design
 partner's real Tally exports plus matching bank statements dropped into
 `harness/`. Nothing about readiness should be claimed until that runs.
 
-## Module E — in flight
+## Databases on this machine
 
-Premise verified: Docker is present; `tenderwatch-postgres-1` (postgres:16)
-holds port 5432 and belongs to **another project — do not build in it**.
-Ledger Pilot gets its own container on **5433**.
+- **5432** `tenderwatch-postgres-1` — **another project. Do not touch it.**
+- **5433** `ledger-pilot-postgres` (`docker compose up -d`), databases
+  `ledger_pilot` and `ledger_pilot_test`. The test one is wiped on every run.
 
-Plan: E1 schema + session + compose · E2 repository and API migration, all 16
-tests green on **both** SQLite and Postgres · E3 persistence tests (survives
-restart, audit append-only, `review.state` single source of truth).
+## Not started
 
-Not started: auth, maker-checker, rules/memory screen, scoreboard, pdfplumber,
-batched AnthropicLLM Tier 3.
+Auth (email OTP) and roles · maker-checker release · rules & memory screen ·
+automation scoreboard · pdfplumber ingestion and real bank configs beyond the
+four stubs · batched AnthropicLLM Tier 3 · **the Phase-0 rerun on real partner
+data, which is the only thing that moves any claim above E3.**

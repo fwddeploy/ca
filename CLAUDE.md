@@ -18,19 +18,25 @@ casually.
   (MockLLM offline / AnthropicLLM prod), `calibrate.py`, `pipeline.py`.
 - `bridge/tally_xml.py` — voucher/masters/undo XML, idempotent `LP-{batch}-{seq}` refs.
 - `harness/` — synthetic golden data + `run.py`, the accuracy gate.
-- `api/main.py` — FastAPI (in-memory demo store); `api/static/index.html` — the SPA.
-- `tests/test_all.py` — 12 tests (8 engine, 4 posting-safety).
+- `db/` — TRD §4 schema (`models.py`), engine/session (`session.py`), and
+  `store.py`, the only place that talks SQL. Postgres or SQLite by `DATABASE_URL`.
+- `api/main.py` — FastAPI over `db/store.py`; `api/static/index.html` — the SPA.
+- `tests/test_all.py` — 20 tests (8 engine, 4 posting-safety, 4 upload, 4 persistence).
 
 ## Commands
 
 ```
-.venv\Scripts\python tests\test_all.py                  # must stay green
-.venv\Scripts\python -m harness.run                     # must end "ALL CHECKS PASS"
-.venv\Scripts\python -m harness.run --materiality 50000 # currently FAILS — see README
-.venv\Scripts\uvicorn api.main:app --port 8000          # app at http://localhost:8000
+.venv\Scripts\python -m pytest tests\test_all.py -q      # must stay green
+.venv\Scripts\python -m harness.run                      # must end "ALL CHECKS PASS"
+.venv\Scripts\python -m harness.run --materiality 50000  # currently FAILS — see README
+docker compose up -d                                     # Postgres on 5433
+.venv\Scripts\python -m uvicorn api.main:app --port 8000
 ```
 
 Setup: `python -m venv .venv && .venv\Scripts\pip install -r requirements.txt`.
+No `DATABASE_URL` → a local SQLite file, so a fresh clone runs without Docker.
+The suite always uses its own throwaway database; `LP_TEST_DB_URL` runs it
+against Postgres and refuses any database not named `*test*`.
 
 ## Non-negotiable principles
 
