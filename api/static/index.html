@@ -109,6 +109,7 @@ function embQueue(sid){
     name:q.find(x=>ids.includes(x.id)).counterparty_name, suggested:q.find(x=>ids.includes(x.id)).suggestion}));
   const ready=s.lines.filter(l=>l.state!=='queue');
   return {statement:s.meta, client:s.client, ledgers:s.ledgers, lines:s.lines, groups,
+          materiality:s.materiality,
           ready:{count:ready.length, sum:ready.reduce((a,l)=>a+l.amount,0)}};
 }
 function embPost(p,body){
@@ -123,7 +124,16 @@ function embPost(p,body){
   m=p.match(/^\/statements\/(.+)\/post$/);
   if(m){ const s=EMB.statements[m[1]];
     const un=s.lines.filter(l=>l.state==='queue'); if(un.length) throw un.length+' lines still need review';
-    s.meta.posted=true; return {batch_id:'demo42', vouchers:s.lines.length, xml:s.xml_preview}; }
+    const already=!!s.meta.posted;
+    /* one statement, one batch id, ever — same rule the server enforces */
+    if(!already){ s.meta.posted=true; s.meta.batch_id='demo42'; }
+    return {batch_id:s.meta.batch_id, vouchers:s.lines.length, xml:s.xml_preview,
+            already_posted:already}; }
+  m=p.match(/^\/statements\/(.+)\/undo$/);
+  if(m){ const s=EMB.statements[m[1]];
+    if(!s.meta.posted) throw 'statement is not posted; nothing to undo';
+    const b=s.meta.batch_id; s.meta.posted=false; s.meta.batch_id=null;
+    return {batch_id:b, cancelled:s.lines.length, xml:'<ENVELOPE>… ACTION="Cancel" …</ENVELOPE>'}; }
   throw 'not found';
 }
 function applyRev(line,body,s){
@@ -159,7 +169,7 @@ async function showClients(){
       <td>${status}</td>
       <td style="font-size:12.5px;color:var(--soft)">${esc(st?st.label:'')}</td></tr>`;}).join('');
   $('main').innerHTML=`
-    <div class="demo" id="demobar">Demo with dummy data — two synthetic clients, one warm (6 months of learned history), one brand-new (cold start). Click a client to review.</div>
+    <div class="demo" id="demobar"><b>Synthetic data, real engine.</b> Every suggestion, tier badge, confidence and threshold below was produced by the actual classifier — two invented clients, one with 6 months of learned history, one starting cold. Click a client to review, or try <b onclick="showUpload()" style="cursor:pointer;text-decoration:underline">Upload statement</b> to see the balance gate.</div>
     <div class="row"><div><h1>Clients</h1><div class="sub">September 2026 · ${CLIENTS.length} active clients</div></div>
     <div style="margin-left:auto"><button class="btn" onclick="showUpload()">Upload statement</button></div></div>
     <div class="stats">
@@ -204,8 +214,19 @@ async function showUpload(cid){
     <input type="file" id="up-file" accept=".csv,.txt,.xlsx,.xls" style="display:none"
            onchange="if(this.files[0])doUpload(this.files[0])">
     <div id="up-out"></div>`;
-  if(EMB){ $('up-out').innerHTML=`<div class="verdict bad"><b>Demo mode.</b>
-    <span>Upload needs the local server — run <span class="mono">uvicorn api.main:app --port 8000</span> and open it there.</span></div>`; }
+  if(EMB){
+    /* No Python here, so the drop zone would be a lie. These two are real
+       output from the real parser, captured at build time — including the
+       balance-continuity verdict, which is the whole point of this screen. */
+    $('drop').outerHTML=`<div class="card" style="padding:22px">
+      <div class="big" style="font-size:15px;font-weight:500;margin-bottom:4px">Two statements the parser has already read</div>
+      <div class="sub" style="margin-bottom:16px">Identical files but for one closing balance, edited by ₹3,000. Parsing runs in Python, so in this shared demo the output is captured rather than live — the numbers below are exactly what the parser returned.</div>
+      <div class="row">
+        <button class="btn" onclick="demoPreview('clean')">A clean HDFC statement</button>
+        <button class="btn o" onclick="demoPreview('edited')">The same file, one balance edited</button>
+      </div></div>`;
+    return;
+  }
   const d=$('drop');
   ['dragenter','dragover'].forEach(e=>d.addEventListener(e,ev=>{ev.preventDefault();d.classList.add('over')}));
   ['dragleave','drop'].forEach(e=>d.addEventListener(e,ev=>{ev.preventDefault();d.classList.remove('over')}));
@@ -251,8 +272,15 @@ function renderPreview(){
       ${p.lines>p.sample.length?`<div class="sub" style="padding:11px 16px">first ${p.sample.length} of ${p.lines} rows</div>`:''}</div>`;
 }
 
+function demoPreview(which){ UP.prev=EMB.previews[which]; renderPreview(); }
+
 async function doClassify(){
   const p=UP.prev, b=$('up-go');
+  if(EMB){
+    const sid=EMB.clients.find(c=>c.id==='sharma').statements[0].id;
+    toast('Classification runs in Python. Here is a statement the engine did classify.');
+    await showQueue(sid); return;
+  }
   b.disabled=true; b.innerHTML='<span class="spin"></span> Classifying '+p.lines+' lines…';
   try{
     const r=await apiPost('/clients/'+UP.cid+'/previews/'+p.preview_id+'/classify');
@@ -324,12 +352,19 @@ async function postStatement(sid){
       <div class="stat"><div class="n">0</div><div class="l">duplicates (ref-guarded)</div></div>
       <div class="stat"><div class="n">1 click</div><div class="l">undo, whole batch</div></div></div>
       <div class="row" style="margin:10px 0 14px"><button class="btn" onclick="downloadXml()">Download Tally XML</button>
+      <button class="btn o" onclick="undoBatch('${sid}')">Undo this batch</button>
       <button class="btn g" onclick="showClients()">Back to clients</button></div>
       <p class="sub">Import in TallyPrime: Gateway of Tally → Import Data → Vouchers → select this file. Preview:</p>
       <pre class="xml">${esc(r.xml.slice(0,2400))}…</pre>`;
     window._xml=r.xml;
   }catch(e){ toast(String(e)); }
 }
+async function undoBatch(sid){
+  try{ const r=await apiPost('/statements/'+sid+'/undo');
+    toast(`Batch ${r.batch_id} cancelled — ${r.cancelled} vouchers. Import the cancellation XML into Tally before re-posting.`);
+    await showQueue(sid);
+  }catch(e){ toast(String(e)); } }
+
 async function downloadXml(){
   if(EMB && window.claude){ try{
       const d=await claude.use('downloads');

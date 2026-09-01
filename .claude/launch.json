@@ -6,6 +6,12 @@
       "runtimeExecutable": "C:\\Users\\DELL\\Projects\\ledger-pilot\\.venv\\Scripts\\python.exe",
       "runtimeArgs": ["-m", "uvicorn", "api.main:app", "--port", "8000"],
       "port": 8000
+    },
+    {
+      "name": "demo-static",
+      "runtimeExecutable": "C:\\Users\\DELL\\Projects\\ledger-pilot\\.venv\\Scripts\\python.exe",
+      "runtimeArgs": ["-m", "http.server", "8020", "--directory", ".scratch"],
+      "port": 8020
     }
   ]
 }
