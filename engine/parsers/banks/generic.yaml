@@ -1,0 +1,9 @@
+bank: GENERIC
+signature_columns: [narration, amount]
+date_formats: ["%Y-%m-%d", "%d/%m/%Y"]
+columns:
+  date: [date]
+  narration: [narration, description, particulars]
+  amount: [amount]
+  drcr: [type, dr/cr, drcr]
+  balance: [balance]

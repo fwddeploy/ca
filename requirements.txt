@@ -1,0 +1,21 @@
+# Ledger Pilot — runtime + test dependencies (Python 3.12)
+# Install:  python -m venv .venv && .venv\Scripts\pip install -r requirements.txt
+
+# engine
+pandas>=2.2
+scikit-learn>=1.5
+numpy>=1.26
+PyYAML>=6.0
+openpyxl>=3.1          # .xlsx statements via pandas.read_excel
+
+# api
+fastapi>=0.115
+uvicorn>=0.30
+python-multipart>=0.0.9   # UploadFile on /api/clients/{cid}/upload
+pydantic>=2.8
+
+# tests
+pytest>=8.0
+
+# Tier 3 production adapter is optional — engine/llm.py imports it lazily:
+#   pip install anthropic

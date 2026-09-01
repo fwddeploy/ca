@@ -1,0 +1,19 @@
+# virtualenv
+.venv/
+venv/
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# throwaway: drafts, one-off scripts, exploration
+.scratch/
+
+# never in git: client statements, Tally exports, memory dumps, secrets
+data/
+*.env
+.env
+*.memory.json
+*.tally.xml

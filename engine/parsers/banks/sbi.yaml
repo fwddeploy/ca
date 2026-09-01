@@ -1,0 +1,9 @@
+bank: SBI
+signature_columns: [description, debit, credit]
+date_formats: ["%d-%m-%Y", "%d %b %Y"]
+columns:
+  date: [txn date, value date, date]
+  narration: [description]
+  withdrawal: [debit]
+  deposit: [credit]
+  balance: [balance]

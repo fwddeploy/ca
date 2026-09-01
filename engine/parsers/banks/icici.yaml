@@ -1,0 +1,9 @@
+bank: ICICI
+signature_columns: [particulars, dr amount, cr amount]
+date_formats: ["%d/%m/%Y"]
+columns:
+  date: [transaction date, date]
+  narration: [particulars, transaction remarks]
+  withdrawal: [dr amount, withdrawal amount]
+  deposit: [cr amount, deposit amount]
+  balance: [balance]

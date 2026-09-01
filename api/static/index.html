@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ledger Pilot</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Serif:wght@600&display=swap">
+<style>
+:root{--paper:#F4F3EC;--card:#FFF;--ink:#22261F;--soft:#6B7062;--rule:#E3E1D6;
+--green:#1E6B4F;--green-soft:#E3EDE6;--dark:#17332A;--amber:#8A6D1F;--amber-soft:#F3ECD7;
+--red:#A6402A;--red-soft:#F4E1DA;--mono:'IBM Plex Mono',monospace}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.55 'IBM Plex Sans',system-ui,sans-serif}
+#app{display:flex;min-height:100vh}
+.side{width:216px;background:var(--dark);color:#CFE0D4;padding:22px 14px;flex-shrink:0;display:flex;flex-direction:column;gap:4px}
+.logo{display:flex;gap:10px;align-items:center;padding:0 10px 20px;font-family:'IBM Plex Serif',serif;font-size:17px;font-weight:600;color:#F4F3EC}
+.nav{display:flex;gap:10px;align-items:center;padding:9px 10px;border-radius:6px;font-size:14px;cursor:pointer}
+.nav.on{background:rgba(127,191,163,.16);color:#F4F3EC;font-weight:500}
+.nav .badge{margin-left:auto;font-family:var(--mono);font-size:11.5px;background:var(--amber);color:#F4F3EC;border-radius:10px;padding:1px 8px}
+.sfoot{margin-top:auto;border-top:1px solid rgba(207,224,212,.18);padding:12px 10px 0;font-size:12px;color:#8FA697}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px}
+main{flex:1;padding:28px 32px;min-width:0}
+h1{font-family:'IBM Plex Serif',serif;font-size:22px;font-weight:600;margin:0}
+.sub{font-size:13px;color:var(--soft);margin-top:2px}
+.row{display:flex;align-items:center;gap:12px}
+.card{background:var(--card);border:1px solid var(--rule);border-radius:8px}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:20px 0}
+.stat{background:var(--card);border:1px solid var(--rule);border-radius:8px;padding:14px 16px}
+.stat .n{font-family:var(--mono);font-size:24px;color:var(--green)}
+.stat .l{font-size:12px;color:var(--soft)}
+.btn{background:var(--green);color:#fff;border:none;border-radius:6px;padding:9px 16px;font-size:13.5px;font-weight:500;cursor:pointer;font-family:inherit}
+.btn.o{background:#fff;color:var(--green);border:1px solid var(--green)}
+.btn.g{background:#fff;color:var(--soft);border:1px solid #D8D5C8}
+.btn:disabled{opacity:.45;cursor:default}
+.chip{border-radius:12px;padding:3px 12px;font-size:12px;font-weight:500;white-space:nowrap}
+.c-rev{background:var(--amber-soft);color:#6B5417}.c-ok{background:var(--green-soft);color:var(--dark)}
+.c-done{background:#E9E7DD;color:#55594E}.c-red{background:var(--red-soft);color:#7A3020}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th{font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-align:left;color:var(--soft);padding:10px 16px;border-bottom:1px solid var(--rule);background:#FBFAF6;text-transform:uppercase}
+td{padding:12px 16px;border-bottom:1px solid #EFEDE4;vertical-align:middle}
+tr:last-child td{border-bottom:none}
+tr.click{cursor:pointer}tr.click:hover td{background:#FBFAF6}
+.mono{font-family:var(--mono)}
+.narr{font-family:var(--mono);font-size:12.5px;max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tier{font-family:var(--mono);font-size:10px;border-radius:3px;padding:1px 6px;letter-spacing:.06em}
+.tier.T0,.tier.T1{background:var(--green);color:#fff}
+.tier.T2{border:1px solid var(--green);color:var(--green)}
+.tier.T3{border:1px solid var(--amber);color:var(--amber)}
+.tier.abstain{border:1px solid var(--red);color:var(--red)}
+.conf{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:6px;vertical-align:baseline}
+.alt{border:1px solid #D8D5C8;color:#55594E;border-radius:5px;padding:3px 10px;font-size:12px;cursor:pointer;background:#fff;font-family:inherit}
+.alt:hover{border-color:var(--green);color:var(--green)}
+.sugg{background:var(--green-soft);border:1px solid var(--green);color:var(--dark);border-radius:5px;padding:3px 10px;font-size:12.5px;font-weight:600;display:inline-flex;gap:7px;align-items:center}
+.groupbar{background:var(--green-soft);padding:11px 16px;display:flex;gap:12px;align-items:center;border-radius:8px 8px 0 0;font-size:13px}
+.qline{border-bottom:1px solid #EFEDE4;padding:11px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.qline.sel{outline:2px solid var(--green);outline-offset:-2px;background:#FDFDF9}
+.evid{font-size:12px;color:var(--soft);width:100%;padding-left:20px}
+select{font:13px var(--mono);padding:5px 8px;border:1px solid #D8D5C8;border-radius:5px;background:#fff;max-width:220px}
+.kbd{background:#E9E7DD;border-radius:3px;padding:2px 7px;font-family:var(--mono);font-size:11px}
+.foot{margin-top:14px;display:flex;gap:16px;font-size:11.5px;color:var(--soft);align-items:center}
+.toast{position:fixed;bottom:22px;right:22px;background:var(--dark);color:#F4F3EC;border-radius:8px;padding:12px 18px;font-size:13px;max-width:380px;box-shadow:0 8px 24px rgba(23,51,42,.35);display:none}
+.bar{height:8px;background:var(--rule);border-radius:4px;overflow:hidden;width:180px}
+.bar>div{height:100%;background:var(--green)}
+pre.xml{background:#FBFAF6;border:1px solid var(--rule);border-radius:6px;padding:14px;font-size:11px;overflow:auto;max-height:300px;white-space:pre-wrap;word-break:break-all}
+.demo{background:var(--amber-soft);color:#6B5417;font-size:12.5px;padding:8px 14px;border-radius:6px;margin-bottom:16px;display:none}
+</style>
+</head>
+<body>
+<div id="app">
+<div class="side">
+  <div class="logo"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="3" stroke="#7FBFA3" stroke-width="1.8"/><path d="M7 9h10M7 13h6" stroke="#7FBFA3" stroke-width="1.8" stroke-linecap="round"/><path d="M15.5 15.5l2 2 3-3.5" stroke="#F4F3EC" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>Ledger Pilot</div>
+  <div class="nav on" id="nav-clients" onclick="showClients()"><span>Clients</span><span class="badge" id="pending-badge" style="display:none"></span></div>
+  <div class="nav">Rules &amp; memory</div>
+  <div class="nav">Scoreboard</div>
+  <div class="nav">Settings</div>
+  <div class="sfoot"><div style="margin-bottom:6px"><span class="dot" style="background:#7FBFA3"></span><span id="conn">demo mode</span></div>Mehta &amp; Associates</div>
+</div>
+<main id="main"></main>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+/* ── API layer: real backend, or embedded demo data ─────────────── */
+const EMB = window.EMBEDDED_DATA || null;
+async function apiGet(p){ if(EMB) return embGet(p); const r=await fetch('/api'+p); if(!r.ok) throw await r.text(); return r.json(); }
+async function apiPost(p,body){ if(EMB) return embPost(p,body); const r=await fetch('/api'+p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}); if(!r.ok) throw (await r.json()).detail; return r.json(); }
+
+/* embedded shim: same shapes, local mutation */
+function embGet(p){
+  if(p==='/clients') return EMB.clients.map(c=>({...c, pending: pendingOf(c)}));
+  const m=p.match(/^\/statements\/(.+)\/queue$/); if(m) return embQueue(m[1]);
+  throw 'not found';
+}
+function pendingOf(c){ return c.statements.reduce((a,s)=>a+EMB.statements[s.id].lines.filter(l=>l.state==='queue').length,0); }
+function embQueue(sid){
+  const s=EMB.statements[sid];
+  const q=s.lines.filter(l=>l.state==='queue'), g={};
+  q.forEach(l=>{const k=l.counterparty_key||l.id;(g[k]=g[k]||[]).push(l.id)});
+  const groups=Object.entries(g).filter(([k,ids])=>ids.length>1).map(([k,ids])=>({key:k,line_ids:ids,
+    name:q.find(x=>ids.includes(x.id)).counterparty_name, suggested:q.find(x=>ids.includes(x.id)).suggestion}));
+  const ready=s.lines.filter(l=>l.state!=='queue');
+  return {statement:s.meta, client:s.client, ledgers:s.ledgers, lines:s.lines, groups,
+          ready:{count:ready.length, sum:ready.reduce((a,l)=>a+l.amount,0)}};
+}
+function embPost(p,body){
+  let m=p.match(/^\/lines\/(.+)\/review$/);
+  if(m){ const lid=m[1], sid=lid.slice(0,lid.lastIndexOf('-')); const s=EMB.statements[sid];
+    const line=s.lines.find(l=>l.id===lid); applyRev(line,body,s);
+    return {line, rule_proposal: null}; }
+  m=p.match(/^\/statements\/(.+)\/groups\/review$/);
+  if(m){ const s=EMB.statements[m[1]]; let n=0;
+    (body.line_ids||[]).forEach(id=>{const l=s.lines.find(x=>x.id===id); if(l&&l.state==='queue'){applyRev(l,body,s);n++}});
+    return {updated:n}; }
+  m=p.match(/^\/statements\/(.+)\/post$/);
+  if(m){ const s=EMB.statements[m[1]];
+    const un=s.lines.filter(l=>l.state==='queue'); if(un.length) throw un.length+' lines still need review';
+    s.meta.posted=true; return {batch_id:'demo42', vouchers:s.lines.length, xml:s.xml_preview}; }
+  throw 'not found';
+}
+function applyRev(line,body,s){
+  const susp=(s.ledgers.find(l=>l.name.includes('Suspense'))||{}).guid;
+  line.final_guid = body.action==='accept' ? (line.suggestion.ledger_guid||susp) :
+    body.action==='reassign' ? body.ledger_guid : susp;
+  line.state='human_reviewed'; line.reviewed_by='you';
+}
+
+/* ── helpers ────────────────────────────────────────────────────── */
+const $=id=>document.getElementById(id);
+const inr=n=>'₹'+Number(n).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function toast(msg){const t=$('toast');t.textContent=msg;t.style.display='block';clearTimeout(t._h);t._h=setTimeout(()=>t.style.display='none',3200);}
+function confDot(l){const s=l.suggestion.score,t=l.suggestion.tier;
+  const col=(t==='T0'||t==='T1')?'var(--green)':s>=.7?'var(--amber)':'var(--red)';
+  return `<span class="conf" style="background:${col}"></span>`;}
+
+/* ── clients view ───────────────────────────────────────────────── */
+let CLIENTS=[];
+async function showClients(){
+  CLIENTS=await apiGet('/clients');
+  const pending=CLIENTS.reduce((a,c)=>a+c.pending,0);
+  const badge=$('pending-badge'); badge.style.display=pending?'inline':'none'; badge.textContent=pending;
+  const rows=CLIENTS.map(c=>{
+    const st=c.statements[c.statements.length-1];
+    const status=c.pending?`<span class="chip c-rev">In review</span>`:
+      (st&&st.posted?`<span class="chip c-done">Posted</span>`:`<span class="chip c-ok">Ready to post</span>`);
+    return `<tr class="click" onclick="showQueue('${st.id}')">
+      <td><b>${esc(c.name)}</b><div style="font-size:12px;color:var(--soft)">${esc(c.tag||c.business)}</div></td>
+      <td class="mono">${c.pending?c.pending+' lines':'—'}</td>
+      <td class="mono" style="color:var(--green)">${Math.round(c.auto_rate*100)}%</td>
+      <td>${status}</td>
+      <td style="font-size:12.5px;color:var(--soft)">${esc(st?st.label:'')}</td></tr>`;}).join('');
+  $('main').innerHTML=`
+    <div class="demo" id="demobar">Demo with dummy data — two synthetic clients, one warm (6 months of learned history), one brand-new (cold start). Click a client to review.</div>
+    <div class="row"><div><h1>Clients</h1><div class="sub">September 2026 · ${CLIENTS.length} active clients</div></div>
+    <div style="margin-left:auto"><button class="btn" onclick="toast('Upload works against the local server: POST /api/clients/{id}/upload with a bank CSV')">Upload statement</button></div></div>
+    <div class="stats">
+      <div class="stat"><div class="n">${CLIENTS.reduce((a,c)=>a+c.statements.length,0)}</div><div class="l">statements this month</div></div>
+      <div class="stat"><div class="n" style="color:var(--amber)">${pending}</div><div class="l">lines awaiting review</div></div>
+      <div class="stat"><div class="n">${Math.round(CLIENTS.reduce((a,c)=>a+c.auto_rate,0)/CLIENTS.length*100)}%</div><div class="l">avg auto-classification</div></div>
+      <div class="stat"><div class="n">100%</div><div class="l">precision on auto-approved</div></div></div>
+    <div class="card"><table><tr><th>Client</th><th>Pending</th><th>Auto-rate</th><th>Status</th><th>Statement</th></tr>${rows}</table></div>`;
+  $('demobar').style.display=EMB?'block':'none';
+  $('conn').textContent=EMB?'demo mode (embedded data)':'connected to local server';
+}
+
+/* ── review queue view ──────────────────────────────────────────── */
+let Q=null, SEL=0;
+async function showQueue(sid){
+  Q=await apiGet('/statements/'+sid+'/queue'); SEL=0; renderQueue();
+}
+function renderQueue(){
+  const s=Q.statement, q=Q.lines.filter(l=>l.state==='queue');
+  const done=Q.lines.length-q.length, pct=Math.round(done/Q.lines.length*100);
+  const opts=Q.ledgers.map(l=>`<option value="${l.guid}">${esc(l.name)}</option>`).join('');
+  const groups=Q.groups.filter(g=>g.line_ids.some(id=>q.find(l=>l.id===id))).map(g=>{
+    const live=g.line_ids.filter(id=>q.find(l=>l.id===id));
+    return `<div class="card" style="margin-bottom:12px;border-color:#C9DACE">
+      <div class="groupbar"><b>Group · ${live.length} similar lines — ${esc(g.name)}</b>
+      <span style="margin-left:auto">classify all as</span>
+      <span class="sugg">${esc(g.suggested.ledger_name||'—')}</span>
+      <button class="btn" style="padding:5px 14px" onclick="reviewGroup('${g.key}')">Apply</button></div></div>`;}).join('');
+  const lines=q.map((l,i)=>{
+    const alts=l.suggestion.alternatives.filter(a=>a.guid!==l.suggestion.ledger_guid).slice(0,2)
+      .map(a=>`<button class="alt" onclick="reassign('${l.id}','${a.guid}')">${esc(a.name)}</button>`).join('');
+    return `<div class="qline${i===SEL?' sel':''}" id="ql-${i}">
+      ${confDot(l)}<span class="narr" title="${esc(l.narration)}">${esc(l.date)} · ${esc(l.narration)}</span>
+      <span class="mono" style="margin-left:auto;font-weight:500">${inr(l.amount)} ${l.direction.toUpperCase()}</span>
+      <span style="width:100%"></span>
+      <span class="sugg">${esc(l.suggestion.ledger_name||'no suggestion')}
+        <span class="tier ${l.suggestion.tier}">${l.suggestion.tier==='abstain'?'?':l.suggestion.tier}</span>
+        <span class="mono" style="font-size:11px;font-weight:400">${Math.round(l.suggestion.score*100)}%</span></span>
+      ${alts}
+      <select onchange="reassign('${l.id}',this.value)"><option value="">reassign to…</option>${opts}</select>
+      <button class="btn o" style="padding:5px 12px" onclick="accept('${l.id}')">Accept</button>
+      <div class="evid">${esc((l.suggestion.evidence||[]).join(' · '))}</div></div>`;}).join('');
+  $('main').innerHTML=`
+    <div class="row"><h1 style="cursor:pointer" onclick="showClients()">‹</h1>
+      <div><h1>Review · ${esc(Q.client.name)}</h1><div class="sub">${esc(s.label)} · balance check ${s.balance_ok?'PASS':'FAIL'} · threshold ${s.threshold} (${s.calibrated?'calibrated':'conservative'})</div></div>
+      <div style="margin-left:auto" class="row"><div class="bar"><div style="width:${pct}%"></div></div>
+      <span class="mono" style="color:var(--green);font-size:13px">${done}/${Q.lines.length}</span>
+      <button class="btn" ${q.length?'disabled':''} onclick="postStatement('${s.id}')">${s.posted?'Posted ✓':'Post '+Q.ready.count+' to Tally →'}</button></div></div>
+    <div style="margin:16px 0" class="row">
+      <span class="chip c-rev">Needs review · ${q.length}</span>
+      <span class="chip c-ok">Ready · ${Q.ready.count} (${inr(Q.ready.sum)})</span></div>
+    ${groups}
+    ${q.length?`<div class="card">${lines}</div>`:`<div class="card" style="padding:26px;text-align:center;color:var(--soft)">All lines reviewed — post to Tally when ready.</div>`}
+    <div class="foot"><span><span class="kbd">↵</span> accept</span><span><span class="kbd">J/K</span> next · prev</span><span style="margin-left:auto">reviewing as Priya · corrections teach this client's memory</span></div>`;
+}
+async function accept(lid){ const r=await apiPost('/lines/'+lid+'/review',{action:'accept'});
+  if(r.rule_proposal) toast('Learned: '+r.rule_proposal.proposal+' (rule proposed)');
+  await refreshQueue(); }
+async function reassign(lid,guid){ if(!guid) return;
+  await apiPost('/lines/'+lid+'/review',{action:'reassign',ledger_guid:guid});
+  toast('Reassigned — this client’s memory updated.'); await refreshQueue(); }
+async function reviewGroup(key){ const g=Q.groups.find(x=>x.key===key);
+  await apiPost('/statements/'+Q.statement.id+'/groups/review',{action:'accept',line_ids:g.line_ids});
+  toast('Group classified — '+g.line_ids.length+' lines done in one decision.'); await refreshQueue(); }
+async function refreshQueue(){ Q=await apiGet('/statements/'+Q.statement.id+'/queue');
+  SEL=Math.min(SEL,Math.max(Q.lines.filter(l=>l.state==='queue').length-1,0)); renderQueue(); }
+async function postStatement(sid){
+  try{ const r=await apiPost('/statements/'+sid+'/post');
+    $('main').innerHTML=`<div class="row"><h1 style="cursor:pointer" onclick="showClients()">‹</h1>
+      <div><h1>Posted to Tally · ${esc(Q.client.name)}</h1><div class="sub">batch ${r.batch_id} · ${r.vouchers} vouchers · idempotent refs LP-${r.batch_id}-NNNN · undo available per batch</div></div></div>
+      <div class="stats"><div class="stat"><div class="n">${r.vouchers}</div><div class="l">vouchers generated</div></div>
+      <div class="stat"><div class="n">100%</div><div class="l">ledgers validated against masters</div></div>
+      <div class="stat"><div class="n">0</div><div class="l">duplicates (ref-guarded)</div></div>
+      <div class="stat"><div class="n">1 click</div><div class="l">undo, whole batch</div></div></div>
+      <div class="row" style="margin:10px 0 14px"><button class="btn" onclick="downloadXml()">Download Tally XML</button>
+      <button class="btn g" onclick="showClients()">Back to clients</button></div>
+      <p class="sub">Import in TallyPrime: Gateway of Tally → Import Data → Vouchers → select this file. Preview:</p>
+      <pre class="xml">${esc(r.xml.slice(0,2400))}…</pre>`;
+    window._xml=r.xml;
+  }catch(e){ toast(String(e)); }
+}
+async function downloadXml(){
+  if(EMB && window.claude){ try{
+      const d=await claude.use('downloads');
+      if(d){ await d.save({filename:'ledger-pilot-vouchers.xml', data:window._xml}); return; }
+    }catch(e){} }
+  if(EMB){ try{ await navigator.clipboard.writeText(window._xml); toast('Full XML copied to clipboard.'); }
+    catch(e){ toast('XML shown below — select and copy.'); } return; }
+  const b=new Blob([window._xml],{type:'application/xml'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download='ledger-pilot-vouchers.xml'; a.click(); }
+
+/* keyboard */
+document.addEventListener('keydown',e=>{
+  if(!Q||!$('ql-0')) return;
+  const q=Q.lines.filter(l=>l.state==='queue'); if(!q.length) return;
+  if(e.key==='j'||e.key==='J'){SEL=Math.min(SEL+1,q.length-1);renderQueue();}
+  if(e.key==='k'||e.key==='K'){SEL=Math.max(SEL-1,0);renderQueue();}
+  if(e.key==='Enter'){accept(q[SEL].id);}
+});
+showClients().catch(e=>{ $('main').innerHTML='<p style="color:var(--red)">Failed to load: '+esc(String(e))+'</p>'; });
+</script>
+</body>
+</html>

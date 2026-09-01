@@ -1,0 +1,9 @@
+bank: HDFC
+signature_columns: [narration, withdrawal, deposit]
+date_formats: ["%d/%m/%y", "%d/%m/%Y"]
+columns:
+  date: [date]
+  narration: [narration]
+  withdrawal: [withdrawal]
+  deposit: [deposit]
+  balance: [closing balance, balance]

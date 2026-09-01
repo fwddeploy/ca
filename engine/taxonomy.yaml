@@ -1,0 +1,62 @@
+# Ledger Pilot category taxonomy v0.1 — Indian chart-of-accounts, ICAI-shaped.
+# Each leaf: id, gloss (used for ledger-name matching), keywords (used by the
+# mock/T3 fallback and as weak-supervision labeling functions), default voucher side.
+# PRD Q1: granularity to be corrected by the design-partner CA.
+categories:
+  # ── Income ────────────────────────────────────────────────
+  - {id: sales_revenue, group: Income, gloss: "sales revenue, customer collections, receipts from debtors for goods sold", keywords: [sales, invoice, collection, payment received], side: cr}
+  - {id: service_income, group: Income, gloss: "service income, professional fees received, job work income", keywords: [service, fees, professional], side: cr}
+  - {id: gateway_settlement, group: Income, gloss: "payment gateway settlements: Razorpay, Cashfree, PayU, Paytm PG, card settlements", keywords: [razorpay, cashfree, payu, billdesk, ccavenue, settlement, paytm pg], side: cr}
+  - {id: interest_income, group: Income, gloss: "bank interest credited, FD interest, savings interest", keywords: [int cr, interest coll, fd int], side: cr}
+  - {id: other_income, group: Income, gloss: "miscellaneous income, refunds received, cashback, incentives", keywords: [refund, cashback, incentive], side: cr}
+
+  # ── Purchases & direct costs ─────────────────────────────
+  - {id: purchases_trade, group: Direct, gloss: "purchase of goods, raw material, stock in trade, payment to supplier vendor", keywords: [purchase, supplier, traders, enterprises, agency, stores, mart, industries], side: dr}
+  - {id: job_work, group: Direct, gloss: "job work charges, processing charges, dyeing, printing, fabrication, labour contractor", keywords: [job work, dyeing, printing, fabrication, processing], side: dr}
+  - {id: freight_inward, group: Direct, gloss: "freight, transport, cartage, courier on purchases, logistics", keywords: [transport, freight, logistics, cartage, roadways, courier, delhivery, bluedart], side: dr}
+  - {id: import_duty, group: Direct, gloss: "customs duty, import charges, clearing forwarding", keywords: [customs, import, cha], side: dr}
+
+  # ── Employee ─────────────────────────────────────────────
+  - {id: salary_wages, group: Employee, gloss: "salary, wages, payroll, stipend to staff and workers", keywords: [salary, payroll, wages, stipend], side: dr}
+  - {id: staff_welfare, group: Employee, gloss: "staff welfare, tea, food for staff, Swiggy Zomato office food, refreshments", keywords: [swiggy, zomato, staff welfare, canteen, refreshment], side: dr}
+  - {id: pf_esi, group: Employee, gloss: "provident fund PF, ESI, EPFO, labour welfare fund remittance", keywords: [epfo, esic, provident, esi], side: dr}
+  - {id: director_remuneration, group: Employee, gloss: "director remuneration, partner drawing, proprietor drawing", keywords: [drawing, remuneration], side: dr}
+
+  # ── Operating expenses ───────────────────────────────────
+  - {id: rent, group: Opex, gloss: "office rent, shop rent, godown rent, lease payment to landlord", keywords: [rent, lease], side: dr}
+  - {id: electricity, group: Opex, gloss: "electricity bill, power, DGVCL MSEB BESCOM torrent power", keywords: [electricity, dgvcl, mseb, bescom, torrent power, tneb, power], side: dr}
+  - {id: telecom_internet, group: Opex, gloss: "telephone, mobile, internet, broadband: Airtel Jio Vi BSNL", keywords: [airtel, jio, vodafone, bsnl, broadband, act fibernet], side: dr}
+  - {id: software_subscription, group: Opex, gloss: "software subscription, SaaS, cloud, Google AWS Microsoft Zoho Tally renewal", keywords: [google, aws, microsoft, zoho, adobe, subscription, saas, tally], side: dr}
+  - {id: fuel_conveyance, group: Opex, gloss: "fuel, petrol, diesel, conveyance, local travel, cab auto, HPCL IOCL BPCL, Uber Ola", keywords: [petrol, diesel, fuel, hpcl, iocl, bpcl, uber, ola, conveyance], side: dr}
+  - {id: travel, group: Opex, gloss: "travelling expense, air rail bus tickets, hotel, IRCTC MakeMyTrip Indigo", keywords: [irctc, makemytrip, indigo, air india, vistara, hotel, travel], side: dr}
+  - {id: repairs_maintenance, group: Opex, gloss: "repairs and maintenance of building machinery vehicle, AMC", keywords: [repair, maintenance, amc, servicing], side: dr}
+  - {id: printing_stationery, group: Opex, gloss: "printing, stationery, office supplies, xerox", keywords: [stationery, printing, xerox, paper], side: dr}
+  - {id: professional_fees, group: Opex, gloss: "professional fees paid: CA CS lawyer consultant audit fees", keywords: [ca , advocate, consultant, audit fee, professional fee, legal], side: dr}
+  - {id: marketing_ads, group: Opex, gloss: "advertising, marketing, Google Ads, Meta Facebook ads, hoarding, promotion", keywords: [google ads, facebook, meta ads, advertising, promotion, marketing], side: dr}
+  - {id: insurance, group: Opex, gloss: "insurance premium: HDFC Ergo, ICICI Lombard, LIC, New India, vehicle policy", keywords: [insurance, ergo, lombard, lic , policy, bajaj allianz, new india], side: dr}
+  - {id: office_misc, group: Opex, gloss: "office expenses, miscellaneous expense, sundry expense, Amazon Flipkart office purchases", keywords: [amazon, flipkart, office expense, misc], side: dr}
+  - {id: security_housekeeping, group: Opex, gloss: "security guard, housekeeping, cleaning services", keywords: [security, housekeeping, facility], side: dr}
+
+  # ── Finance & bank ───────────────────────────────────────
+  - {id: bank_charges, group: Finance, gloss: "bank charges, SMS charges, AMC, cheque return charges, processing fee, GST on charges", keywords: [chrg, charges, sms alert, min bal, penal, chq return], side: dr}
+  - {id: interest_paid, group: Finance, gloss: "interest on loan OD CC limit, EMI interest portion", keywords: [int recovered, interest debited, od int], side: dr}
+  - {id: loan_emi, group: Finance, gloss: "loan EMI, NACH mandate to NBFC bank: Bajaj Finance HDFC loan Tata Capital repayment", keywords: [emi, bajaj fin, tata capital, hdb, loan, nach], side: dr}
+  - {id: loan_received, group: Finance, gloss: "loan disbursement received, OD drawdown, borrowing credited", keywords: [disbursement, loan cr], side: cr}
+
+  # ── Taxes & statutory ────────────────────────────────────
+  - {id: gst_payment, group: Statutory, gloss: "GST challan payment, GSTN, CBIC tax remittance", keywords: [gst, gstn, cbic], side: dr}
+  - {id: tds_payment, group: Statutory, gloss: "TDS TCS challan payment, income tax challan, advance tax, CBDT", keywords: [tds, cbdt, income tax, advance tax, oltas], side: dr}
+  - {id: itr_refund, group: Statutory, gloss: "income tax refund credited by ITD", keywords: [itd refund, it refund], side: cr}
+  - {id: professional_tax, group: Statutory, gloss: "professional tax, PT remittance to state", keywords: [ptax, profession tax], side: dr}
+  - {id: mca_roc, group: Statutory, gloss: "MCA ROC filing fees", keywords: [mca, roc], side: dr}
+
+  # ── Assets, transfers, parties ───────────────────────────
+  - {id: fixed_asset, group: Asset, gloss: "purchase of fixed asset: machinery, vehicle, computer, furniture, equipment", keywords: [machinery, equipment, furniture, laptop, vehicle purchase], side: dr}
+  - {id: investment, group: Asset, gloss: "investment made: FD placed, mutual fund SIP, shares", keywords: [fd , fixed deposit, mutual fund, sip, groww, zerodha], side: dr}
+  - {id: self_transfer, group: Transfer, gloss: "transfer between own accounts of the same business, contra entry", keywords: [self, own transfer, contra], side: contra}
+  - {id: customer_receipt, group: Party, gloss: "receipt from a customer debtor against outstanding invoice", keywords: [], side: cr}
+  - {id: vendor_payment, group: Party, gloss: "payment to a vendor creditor against outstanding bill", keywords: [], side: dr}
+  - {id: reversal, group: Other, gloss: "reversal, bounce, returned transaction, failed payment refund", keywords: [rev, reversal, return, bounce], side: any}
+  - {id: cash_deposit, group: Other, gloss: "cash deposited into bank at branch or CDM", keywords: [cash dep, cdm, by cash], side: cr}
+  - {id: cash_withdrawal, group: Other, gloss: "cash withdrawn for business use, ATM, self cheque", keywords: [cash wdl, atm, self], side: dr}
+  - {id: suspense, group: Other, gloss: "unclassifiable — needs human review or client input", keywords: [], side: any}
