@@ -75,7 +75,34 @@ design-partner data: their Tally voucher exports + matching bank statements.
 Drop them in, point `harness/run.py` at them, and the go/no-go is measured the
 same way.
 
-## Next (M1, per TRD)
+## The app
 
-FastAPI server + data model → upload flow → review queue UI (grouping, top-3
-chips, keyboard-first) → calibrated routing → XML export → design-partner pilot.
+```
+python -m venv .venv && .venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\python -m uvicorn api.main:app --port 8000
+```
+
+Upload is deliberately two steps, because a statement that does not reconcile
+was either mis-parsed or edited, and neither belongs in front of a CA:
+
+| Step | Endpoint | What it does |
+|---|---|---|
+| 1 | `POST /api/clients/{cid}/upload` | Parses only. Returns the detected bank, row count, period, opening/closing, the balance-continuity verdict and the rows that break it, plus a sample. **Classifies nothing.** |
+| 2 | `POST /api/clients/{cid}/previews/{pid}/classify` | Runs the engine. **409 if the balance chain broke** (TRD §5), naming the rows. |
+
+Posting is idempotent: `POST /statements/{sid}/post` returns the same batch id
+every time, `GET /statements/{sid}/xml` is a read that 409s until posted, and
+`POST /statements/{sid}/undo` emits the cancellation XML for a posted batch.
+One statement is only ever one `LP-{batch}` in Tally.
+
+Rejected gracefully: PDFs and scans (v1.5), non-tabular or password-protected
+files, and column layouts no bank config matches — the error names the columns
+it actually saw.
+
+## Next (M1 → M2, per TRD)
+
+Postgres + SQLAlchemy behind the same shapes · email-OTP auth and the
+maker-checker release step · rules & memory screen · automation scoreboard ·
+pdfplumber ingestion and real bank configs beyond the four stubs · batched
+AnthropicLLM Tier 3 · and the one that decides everything, the Phase-0 rerun
+of `harness/run.py` on a design partner's real Tally exports.

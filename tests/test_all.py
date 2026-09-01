@@ -183,6 +183,103 @@ def test_unreviewed_lines_never_export():
     assert DB["statements"][sid]["batch_id"] is None
 
 
+# ── M1 upload: parse preview, then classify ──────────────────────────
+
+
+def _hdfc_csv(tamper_row: int | None = None) -> bytes:
+    """An HDFC-layout statement as bytes. tamper_row edits one closing balance,
+    the way an altered PDF would, so the continuity chain must break there."""
+    from harness.synth import gen_month, make_client
+    rows, _ = gen_month(make_client(), "2026-11", seed=4242)
+    if tamper_row is not None:
+        rows[tamper_row]["balance"] = round(rows[tamper_row]["balance"] + 75_000, 2)
+    out = ["Date,Narration,Withdrawal,Deposit,Closing Balance"]
+    for r in rows:
+        y, m, d = r["date"].split("-")
+        out.append(",".join([
+            f"{d}/{m}/{y[2:]}", '"' + r["narration"].replace('"', "") + '"',
+            f"{r['amount']}" if r["direction"] == "dr" else "",
+            f"{r['amount']}" if r["direction"] == "cr" else "",
+            f"{r['balance']}"]))
+    return ("\n".join(out) + "\n").encode()
+
+
+def _upload(client, cid, name, blob):
+    return client.post(f"/api/clients/{cid}/upload",
+                       files={"file": (name, blob, "text/csv")})
+
+
+def test_upload_previews_but_does_not_classify():
+    """PRD core loop: parse preview + balance check comes *before* any
+    classification. The upload used to classify and store in one shot."""
+    from fastapi.testclient import TestClient
+
+    from api.main import DB, app
+    client = TestClient(app)
+    before = set(DB["statements"])
+
+    r = _upload(client, "sharma", "nov.csv", _hdfc_csv())
+    assert r.status_code == 200, r.text
+    p = r.json()
+    assert p["bank"] == "HDFC" and p["lines"] > 0
+    assert p["balance_ok"] is True and p["balance_breaks"] == []
+    assert p["opening"] is not None and p["closing"] is not None
+    assert len(p["sample"]) == 12
+    assert set(DB["statements"]) == before, "preview created a statement"
+
+    c = client.post(f"/api/clients/sharma/previews/{p['preview_id']}/classify")
+    assert c.status_code == 200, c.text
+    sid = c.json()["statement_id"]
+    assert sid not in before and len(DB["statements"][sid]["lines"]) == p["lines"]
+    assert client.get(f"/api/statements/{sid}/queue").status_code == 200
+
+
+def test_broken_balance_chain_blocks_classification():
+    """TRD §5: the continuity check blocks classification and names the rows."""
+    from fastapi.testclient import TestClient
+
+    from api.main import DB, app
+    client = TestClient(app)
+    before = set(DB["statements"])
+
+    p = _upload(client, "sharma", "tampered.csv", _hdfc_csv(tamper_row=9)).json()
+    assert p["balance_ok"] is False
+    assert p["balance_breaks"], "tampered balance was not detected"
+    assert p["balance_breaks"][0]["row"] == 10          # 0-indexed row 9
+
+    r = client.post(f"/api/clients/sharma/previews/{p['preview_id']}/classify")
+    assert r.status_code == 409 and "Balance continuity" in r.json()["detail"]
+    assert set(DB["statements"]) == before, "a non-reconciling statement was classified"
+
+
+def test_upload_rejects_what_it_cannot_read():
+    from fastapi.testclient import TestClient
+
+    from api.main import app
+    client = TestClient(app)
+
+    r = _upload(client, "sharma", "scan.pdf", b"%PDF-1.4 not really")
+    assert r.status_code == 415 and "v1.5" in r.json()["detail"]
+
+    r = _upload(client, "sharma", "notes.docx", b"nope")
+    assert r.status_code == 415
+
+    r = _upload(client, "sharma", "mystery.csv", b"Alpha,Beta,Gamma\n1,2,3\n")
+    assert r.status_code == 422 and "No bank format matched" in r.json()["detail"]
+
+    assert _upload(client, "nosuchclient", "x.csv", _hdfc_csv()).status_code == 404
+
+
+def test_preview_is_scoped_to_its_client():
+    from fastapi.testclient import TestClient
+
+    from api.main import app
+    client = TestClient(app)
+    pid = _upload(client, "sharma", "nov.csv", _hdfc_csv()).json()["preview_id"]
+    assert client.post(f"/api/clients/deshmukh/previews/{pid}/classify").status_code == 404
+    assert client.post(f"/api/clients/sharma/previews/{pid}/classify").status_code == 200
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

@@ -63,6 +63,16 @@ select{font:13px var(--mono);padding:5px 8px;border:1px solid #D8D5C8;border-rad
 .bar>div{height:100%;background:var(--green)}
 pre.xml{background:#FBFAF6;border:1px solid var(--rule);border-radius:6px;padding:14px;font-size:11px;overflow:auto;max-height:300px;white-space:pre-wrap;word-break:break-all}
 .demo{background:var(--amber-soft);color:#6B5417;font-size:12.5px;padding:8px 14px;border-radius:6px;margin-bottom:16px;display:none}
+.drop{border:2px dashed #C9C6B6;border-radius:10px;padding:46px 24px;text-align:center;background:#FBFAF6;cursor:pointer;transition:border-color .15s,background .15s}
+.drop:hover{border-color:#A9B8AC}
+.drop.over{border-color:var(--green);background:var(--green-soft)}
+.drop .big{font-size:15px;font-weight:500;margin-bottom:4px}
+.verdict{border-radius:8px;padding:12px 16px;font-size:13.5px;display:flex;gap:10px;align-items:flex-start;margin:16px 0}
+.verdict.ok{background:var(--green-soft);color:var(--dark)}
+.verdict.bad{background:var(--red-soft);color:#7A3020}
+.verdict b{white-space:nowrap}
+.spin{display:inline-block;width:13px;height:13px;border:2px solid var(--rule);border-top-color:var(--green);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
+@keyframes sp{to{transform:rotate(360deg)}}
 </style>
 </head>
 <body>
@@ -151,7 +161,7 @@ async function showClients(){
   $('main').innerHTML=`
     <div class="demo" id="demobar">Demo with dummy data — two synthetic clients, one warm (6 months of learned history), one brand-new (cold start). Click a client to review.</div>
     <div class="row"><div><h1>Clients</h1><div class="sub">September 2026 · ${CLIENTS.length} active clients</div></div>
-    <div style="margin-left:auto"><button class="btn" onclick="toast('Upload works against the local server: POST /api/clients/{id}/upload with a bank CSV')">Upload statement</button></div></div>
+    <div style="margin-left:auto"><button class="btn" onclick="showUpload()">Upload statement</button></div></div>
     <div class="stats">
       <div class="stat"><div class="n">${CLIENTS.reduce((a,c)=>a+c.statements.length,0)}</div><div class="l">statements this month</div></div>
       <div class="stat"><div class="n" style="color:var(--amber)">${pending}</div><div class="l">lines awaiting review</div></div>
@@ -160,6 +170,95 @@ async function showClients(){
     <div class="card"><table><tr><th>Client</th><th>Pending</th><th>Auto-rate</th><th>Status</th><th>Statement</th></tr>${rows}</table></div>`;
   $('demobar').style.display=EMB?'block':'none';
   $('conn').textContent=EMB?'demo mode (embedded data)':'connected to local server';
+}
+
+/* ── upload: parse preview, then classify ───────────────────────── */
+/* Two steps on purpose. Nothing is classified until the operator has seen what
+   we read out of their file and the balance chain has reconciled — a statement
+   that does not reconcile was either mis-parsed or edited, and either way the
+   numbers must not reach a CA. */
+let UP={cid:null, prev:null};
+
+async function apiUpload(cid,file){
+  const fd=new FormData(); fd.append('file',file);
+  const r=await fetch('/api/clients/'+cid+'/upload',{method:'POST',body:fd});
+  const j=await r.json().catch(()=>({detail:'upload failed'}));
+  if(!r.ok) throw j.detail||'upload failed';
+  return j;
+}
+
+async function showUpload(cid){
+  if(!CLIENTS.length) CLIENTS=await apiGet('/clients');
+  UP={cid:cid||CLIENTS[0].id, prev:null};
+  const opts=CLIENTS.map(c=>`<option value="${c.id}"${c.id===UP.cid?' selected':''}>${esc(c.name)}</option>`).join('');
+  $('main').innerHTML=`
+    <div class="row"><h1 style="cursor:pointer" onclick="showClients()">‹</h1>
+      <div><h1>Upload statement</h1><div class="sub">Parsed and balance-checked first — classification only starts once you confirm.</div></div></div>
+    <div class="row" style="margin:18px 0 14px"><label class="sub">Client</label>
+      <select id="up-client" onchange="UP.cid=this.value" style="max-width:320px">${opts}</select></div>
+    <div class="drop" id="drop" onclick="$('up-file').click()">
+      <div class="big">Drop a bank statement here, or click to choose</div>
+      <div class="sub">CSV or Excel from net-banking · HDFC, ICICI, SBI and generic column layouts</div>
+      <div class="sub" style="margin-top:8px">PDF and scanned statements arrive in v1.5</div>
+    </div>
+    <input type="file" id="up-file" accept=".csv,.txt,.xlsx,.xls" style="display:none"
+           onchange="if(this.files[0])doUpload(this.files[0])">
+    <div id="up-out"></div>`;
+  if(EMB){ $('up-out').innerHTML=`<div class="verdict bad"><b>Demo mode.</b>
+    <span>Upload needs the local server — run <span class="mono">uvicorn api.main:app --port 8000</span> and open it there.</span></div>`; }
+  const d=$('drop');
+  ['dragenter','dragover'].forEach(e=>d.addEventListener(e,ev=>{ev.preventDefault();d.classList.add('over')}));
+  ['dragleave','drop'].forEach(e=>d.addEventListener(e,ev=>{ev.preventDefault();d.classList.remove('over')}));
+  d.addEventListener('drop',ev=>{ const f=ev.dataTransfer.files[0]; if(f) doUpload(f); });
+}
+
+async function doUpload(file){
+  if(EMB){ toast('Upload needs the local server.'); return; }
+  $('up-out').innerHTML=`<div class="verdict ok"><span class="spin"></span><span>Reading ${esc(file.name)}…</span></div>`;
+  try{ UP.prev=await apiUpload(UP.cid,file); renderPreview(); }
+  catch(e){ UP.prev=null;
+    $('up-out').innerHTML=`<div class="verdict bad"><b>Cannot use this file.</b><span>${esc(String(e))}</span></div>`; }
+}
+
+function renderPreview(){
+  const p=UP.prev;
+  const rows=p.sample.map(r=>`<tr>
+    <td class="mono" style="white-space:nowrap">${esc(r.date)}</td>
+    <td class="narr" title="${esc(r.narration)}">${esc(r.narration)}</td>
+    <td class="mono" style="text-align:right;white-space:nowrap">${inr(r.amount)} ${r.direction.toUpperCase()}</td>
+    <td class="mono" style="text-align:right;color:var(--soft);white-space:nowrap">${r.balance==null?'—':inr(r.balance)}</td></tr>`).join('');
+  const verdict = p.balance_ok
+    ? `<div class="verdict ok"><b>Balance chain reconciles.</b><span>Opening ${inr(p.opening)} + ${inr(p.credits)} credits − ${inr(p.debits)} debits = closing ${inr(p.closing)}. Every row's running balance checks out, so the file was neither mis-parsed nor altered.</span></div>`
+    : `<div class="verdict bad"><b>Balance chain breaks.</b><span>${p.balance_breaks.length} row(s) do not reconcile — rows ${p.balance_breaks.map(b=>b.row).join(', ')}. Classification is blocked until this is fixed: the file was mis-parsed or edited.
+       <div style="margin-top:8px">${p.balance_breaks.map(b=>`<div class="mono" style="font-size:11.5px">row ${b.row} · ${esc(b.date)} · ${esc(b.narration.slice(0,60))} · ${inr(b.amount)} ${b.direction.toUpperCase()} · shown balance ${inr(b.balance)}</div>`).join('')}</div></span></div>`;
+  $('up-out').innerHTML=`
+    <div class="stats" style="margin-top:22px">
+      <div class="stat"><div class="n">${p.lines}</div><div class="l">rows parsed</div></div>
+      <div class="stat"><div class="n" style="font-size:17px">${esc(p.bank)}</div><div class="l">format detected</div></div>
+      <div class="stat"><div class="n" style="font-size:15px">${esc(p.from)} → ${esc(p.to)}</div><div class="l">period</div></div>
+      <div class="stat"><div class="n" style="color:${p.balance_ok?'var(--green)':'var(--red)'}">${p.balance_ok?'PASS':'FAIL'}</div><div class="l">balance continuity</div></div>
+    </div>
+    ${verdict}
+    <div class="row" style="margin:14px 0">
+      <button class="btn" id="up-go" ${p.balance_ok?'':'disabled'} onclick="doClassify()">
+        ${p.balance_ok?`Classify ${p.lines} lines →`:'Classification blocked'}</button>
+      <button class="btn g" onclick="showUpload(UP.cid)">Choose a different file</button>
+      <span class="sub" style="margin-left:auto">Nothing has been classified or sent anywhere yet.</span>
+    </div>
+    <div class="card"><table>
+      <tr><th>Date</th><th>Narration as the bank wrote it</th><th style="text-align:right">Amount</th><th style="text-align:right">Balance</th></tr>
+      ${rows}</table>
+      ${p.lines>p.sample.length?`<div class="sub" style="padding:11px 16px">first ${p.sample.length} of ${p.lines} rows</div>`:''}</div>`;
+}
+
+async function doClassify(){
+  const p=UP.prev, b=$('up-go');
+  b.disabled=true; b.innerHTML='<span class="spin"></span> Classifying '+p.lines+' lines…';
+  try{
+    const r=await apiPost('/clients/'+UP.cid+'/previews/'+p.preview_id+'/classify');
+    toast(`${r.lines} lines classified · ${Math.round(r.auto_rate*100)}% auto · ${r.queued} to review`);
+    await showQueue(r.statement_id);
+  }catch(e){ b.disabled=false; b.textContent='Classify '+p.lines+' lines →'; toast(String(e)); }
 }
 
 /* ── review queue view ──────────────────────────────────────────── */
@@ -194,7 +293,7 @@ function renderQueue(){
       <div class="evid">${esc((l.suggestion.evidence||[]).join(' · '))}</div></div>`;}).join('');
   $('main').innerHTML=`
     <div class="row"><h1 style="cursor:pointer" onclick="showClients()">‹</h1>
-      <div><h1>Review · ${esc(Q.client.name)}</h1><div class="sub">${esc(s.label)} · balance check ${s.balance_ok?'PASS':'FAIL'} · threshold ${s.threshold} (${s.calibrated?'calibrated':'conservative'})</div></div>
+      <div><h1>Review · ${esc(Q.client.name)}</h1><div class="sub">${esc(s.label)} · balance check ${s.balance_ok?'PASS':'FAIL'} · threshold ${s.threshold} (${s.calibrated?'calibrated':'conservative'})${Q.materiality?` · anything from ${inr(Q.materiality)} queues regardless of confidence`:''}</div></div>
       <div style="margin-left:auto" class="row"><div class="bar"><div style="width:${pct}%"></div></div>
       <span class="mono" style="color:var(--green);font-size:13px">${done}/${Q.lines.length}</span>
       <button class="btn" ${q.length?'disabled':''} onclick="postStatement('${s.id}')">${s.posted?'Posted ✓':'Post '+Q.ready.count+' to Tally →'}</button></div></div>

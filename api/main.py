@@ -30,8 +30,19 @@ from harness.synth import gen_month, history_vouchers, make_client
 app = FastAPI(title="Ledger Pilot")
 
 # ── in-memory demo store ─────────────────────────────────────────────
-DB: dict = {"clients": {}, "statements": {}, "audit": []}
+DB: dict = {"clients": {}, "statements": {}, "previews": {}, "audit": []}
+
+# Firm-configurable guardrail: lines at or above this queue regardless of
+# confidence. NOT the shipped calibrate.MATERIALITY_DEFAULT (₹50,000) — the demo
+# client is a textile trader whose median line is ₹31k, and at ₹50,000 the
+# guardrail alone would queue 37% of the statement. Every surface that reports
+# an auto-rate must also report this number; see README.
 MATERIALITY = 200_000.0
+
+
+def _bank_configs():
+    from engine.parsers import load_configs
+    return load_configs()
 
 
 def _client_record(cid, name, business, ledgers, memory, bank_ledger, tag=""):
@@ -152,6 +163,7 @@ def queue(sid: str):
             "client": {"id": c["id"], "name": c["name"], "tag": c["tag"]},
             "ledgers": [{"guid": l["guid"], "name": l["name"]} for l in c["ledgers"]],
             "lines": s["lines"], "groups": grouped,
+            "materiality": MATERIALITY,
             "ready": {"count": len(ready), "sum": round(sum(l["amount"] for l in ready), 2)}}
 
 
@@ -264,21 +276,106 @@ def undo_statement(sid: str):
     return {"batch_id": batch, "cancelled": n, "xml": xml}
 
 
+SPREADSHEET = (".csv", ".txt", ".xlsx", ".xls")
+
+
+def _read_upload(filename: str, blob: bytes):
+    """Bytes → DataFrame, with the rejections the PRD asks to be graceful about."""
+    import pandas as pd
+
+    suffix = Path(filename or "").suffix.lower()
+    if suffix == ".pdf":
+        raise HTTPException(415, "PDF statements arrive in v1.5. For now, export "
+                                 "CSV or XLSX from net-banking — same statement, "
+                                 "no re-keying.")
+    if suffix not in SPREADSHEET:
+        raise HTTPException(415, f"Cannot read '{suffix or filename}'. Upload a CSV or "
+                                 f"Excel bank statement ({', '.join(SPREADSHEET)}).")
+    try:
+        if suffix in (".xlsx", ".xls"):
+            return pd.read_excel(io.BytesIO(blob), dtype=str)
+        return pd.read_csv(io.BytesIO(blob), dtype=str)
+    except Exception as exc:                       # unreadable / encrypted / not a table
+        raise HTTPException(422, f"Could not read the file as a table. If it is "
+                                 f"password-protected, remove the password and try "
+                                 f"again. ({type(exc).__name__})")
+
+
 @app.post("/api/clients/{cid}/upload")
 async def upload(cid: str, file: UploadFile):
+    """Step 1 of 2 — parse and check. Deliberately does NOT classify.
+
+    The operator sees what we read out of their file, and the balance-continuity
+    verdict, before a single line is sent anywhere. Returns a preview_id to hand
+    to /classify.
+    """
     c = DB["clients"].get(cid) or _404()
-    import pandas as pd
     from engine.parsers import detect_bank, parse_dataframe
-    df = pd.read_csv(io.BytesIO(await file.read()), dtype=str)
+
+    df = _read_upload(file.filename, await file.read())
     cfg = detect_bank(list(df.columns))
     if cfg is None:
-        raise HTTPException(422, "Unknown statement format — no bank config matched")
+        raise HTTPException(422, "No bank format matched these columns: "
+                                 f"{[str(x) for x in df.columns][:8]}. Supported: "
+                                 f"{', '.join(sorted(x['bank'] for x in _bank_configs()))}.")
     stmt = parse_dataframe(df, cfg)
+    if not stmt.lines:
+        raise HTTPException(422, "Parsed 0 transaction rows — the file matched "
+                                 f"{cfg['bank']} but every row was empty or unreadable.")
+
+    pid = uuid.uuid4().hex[:8]
+    DB["previews"][pid] = {"client_id": cid, "stmt": stmt, "filename": file.filename,
+                           "label": f"{cfg['bank']} · {file.filename}"}
+    for stale in list(DB["previews"])[:-20]:       # keep the store bounded
+        DB["previews"].pop(stale, None)
+
+    dr = sum(l.amount for l in stmt.lines if l.direction == "dr")
+    cr = sum(l.amount for l in stmt.lines if l.direction == "cr")
+    dates = sorted(l.date for l in stmt.lines)
+    return {
+        "preview_id": pid, "bank": cfg["bank"], "filename": file.filename,
+        "lines": len(stmt.lines), "from": dates[0], "to": dates[-1],
+        "opening": stmt.opening_balance, "closing": stmt.closing_balance,
+        "debits": round(dr, 2), "credits": round(cr, 2),
+        "balance_ok": stmt.balance_ok,
+        "balance_breaks": [
+            {"row": i + 1, "date": stmt.lines[i].date, "narration": stmt.lines[i].narration,
+             "amount": stmt.lines[i].amount, "direction": stmt.lines[i].direction,
+             "balance": stmt.lines[i].balance}
+            for i in stmt.balance_breaks[:10]],
+        "sample": [{"date": l.date, "narration": l.narration, "amount": l.amount,
+                    "direction": l.direction, "balance": l.balance}
+                   for l in stmt.lines[:12]],
+    }
+
+
+@app.post("/api/clients/{cid}/previews/{pid}/classify")
+def classify_preview(cid: str, pid: str):
+    """Step 2 of 2 — the operator has seen the parse and confirmed it.
+
+    A broken balance chain blocks this, per TRD §5: if the running balance does
+    not reconcile we either mis-parsed the file or the PDF was edited, and
+    either way classifying it would put invented numbers in front of a CA.
+    """
+    c = DB["clients"].get(cid) or _404()
+    p = DB["previews"].get(pid) or _404()
+    if p["client_id"] != cid:
+        raise HTTPException(404, "not found")
+    stmt = p["stmt"]
+    if not stmt.balance_ok:
+        raise HTTPException(409, f"Balance continuity fails at {len(stmt.balance_breaks)} "
+                                 f"row(s): {[i + 1 for i in stmt.balance_breaks[:10]]}. "
+                                 "The statement was mis-parsed or altered — nothing is "
+                                 "classified until it reconciles.")
     res = classify_statement(stmt, c["memory"], c["ledgers"], business=c["business"],
                              calibration=c["calibration"], materiality=MATERIALITY)
-    sid = _store_statement(c, res, f"{cfg['bank']} · {file.filename}")
+    sid = _store_statement(c, res, p["label"])
+    DB["previews"].pop(pid, None)
+    DB["audit"].append({"actor": "priya", "action": "classify",
+                        "statement": sid, "file": p["filename"]})
     return {"statement_id": sid, "lines": len(res.lines),
-            "balance_ok": stmt.balance_ok, "auto_rate": round(res.auto_rate, 3)}
+            "auto_rate": round(res.auto_rate, 3),
+            "queued": sum(1 for l in res.lines if l.state == "queue")}
 
 
 @app.get("/api/statements/{sid}/xml", response_class=PlainTextResponse)
