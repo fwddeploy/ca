@@ -1,14 +1,19 @@
-# State — 2026-09-01
+# State — 2026-09-02
 
 Written before the context wall, not after. If a session ends here, this is
-enough to carry on.
+enough to carry on. **Start at [`../README.md`](../README.md)** — it is the
+handoff document; this file is the position log behind it.
 
 ## Where the project lives
 
-`C:\Users\DELL\Projects\ledger-pilot`, git repo, remote
-`https://github.com/fwddeploy/ca.git` (**public**, currently **empty — nothing
-pushed yet**; the owner has not been asked for the push). Origin of the code:
-`C:\Users\DELL\Downloads\ledger-pilot-handoff_1.zip`.
+`C:\Users\DELL\Projects\ledger-pilot`, pushed to
+<https://github.com/fwddeploy/ca> on branch `main`. **The repository is public**
+— that was the owner's decision, made knowing `docs/decisions.md` carries
+competitive positioning. No client data is in it; everything is synthetic.
+Original source of the code: `ledger-pilot-handoff_1.zip`.
+
+Proven from a clean clone on 2026-09-02: `git clone` → `venv` →
+`pip install -r requirements.txt` → **20/20 tests with Docker and without it**.
 
 Environment: Python 3.12.10, project `.venv`, `requirements.txt` pinned loose.
 Run `.venv\Scripts\python -m pytest tests\test_all.py -q` and

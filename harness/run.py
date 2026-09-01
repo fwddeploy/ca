@@ -16,6 +16,12 @@ import argparse
 import sys
 from pathlib import Path
 
+# A default Windows console is cp1252, and this report prints ₹, ≥, → and box
+# rules. Without this line `python -m harness.run` dies on its very first print
+# with UnicodeEncodeError — found by running a clean clone in a plain shell.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from engine import calibrate                                # noqa: E402
