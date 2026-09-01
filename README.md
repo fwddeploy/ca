@@ -33,14 +33,42 @@ Production: `pip install anthropic`, set `ANTHROPIC_API_KEY` and `LP_USE_REAL_LL
 
 ## Current synthetic-harness numbers (Sep 2026)
 
+Reproduced on a clean machine, 49-line test month. **An auto-rate is meaningless
+without the materiality it ran at** — the guardrail queues every line at or above
+that amount regardless of confidence, so a generous materiality flatters the
+auto-rate while changing nothing about the engine.
+
+At **₹2,00,000** materiality — `python -m harness.run`:
+
 | Scenario | Suggestion top-1 | Auto-classified | Auto precision |
 |---|---|---|---|
 | Cold start (masters only) | 73.5% | 0% (conservative by design) | — |
 | 6 months history + calibrated threshold | 98.0% | 87.8% | 100% |
 | Month 2 after corrections (cold client) | 97.9% | 66.7% | 100% |
 
-Zero dangerous auto-posts in all runs; balance checks pass; materiality and
-first-seen-counterparty guardrails route the risky lines to review.
+At the **₹50,000 the product actually ships** (`calibrate.MATERIALITY_DEFAULT`) —
+`python -m harness.run --materiality 50000`:
+
+| Scenario | Suggestion top-1 | Auto-classified | Auto precision |
+|---|---|---|---|
+| Cold start (masters only) | 73.5% | 0% | — |
+| 6 months history + calibrated threshold | 98.0% | **59.2%** | 100% |
+| Month 2 after corrections (cold client) | 97.9% | **45.8%** | 100% |
+
+Zero dangerous auto-posts in every run; balance checks pass; precision holds at
+100% throughout. Suggestion accuracy is unchanged — only the routing moves.
+
+### Open: the bar and the default contradict each other
+
+On this test month, 18 of 49 lines (36.7%) sit at or above ₹50,000, so the
+materiality guardrail alone caps the auto-rate at **63.3%**. The TRD §10 check
+"warm auto ≥ 75%" is therefore *arithmetically unreachable* at the shipped
+default — no engine improvement can pass it. One of three things is wrong: the
+₹50,000 default, the 75% bar, or the harness's ₹2,00,000. **Do not resolve this
+by weakening the check.** It is a question for real partner statements: the
+synthetic client is a Surat textile trader with a median line of ₹31,175 and a
+p75 of ₹63,058, and a different client's amount distribution moves this number
+a long way.
 
 **These are synthetic numbers.** The real Phase 0 gate runs this same harness on
 design-partner data: their Tally voucher exports + matching bank statements.
